@@ -1,7 +1,7 @@
 ---
-title: "Using OpenAI GPT with json-inference"
+title: "OpenAI GPT Models with json-inference: Structured Output"
 sidebarTitle: "OpenAI"
-description: "Connect json-inference to OpenAI's GPT models using native response_format with json_schema. Covers API key setup, recommended models, and a complete typed example."
+description: "Connect json-inference to OpenAI GPT via response_format. Covers GPT5Inference, API key setup, GPT-4o model recommendations, and a complete typed example."
 ---
 
 `json-inference` integrates with OpenAI using the `InferenceName.GPT5Inference` enum value. OpenAI is one of the providers that natively supports `response_format` with `json_schema`, so no tool-calling workaround is needed — the library sends your schema directly and parses the structured response in a single API call.

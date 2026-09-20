@@ -1,7 +1,7 @@
 ---
-title: "Using DeepSeek with json-inference"
+title: "DeepSeek Structured JSON Output via json-inference"
 sidebarTitle: "DeepSeek"
-description: "json-inference uses tool-calling to extract structured JSON from DeepSeek models. Covers API key setup, the deepseek-chat model, retry logic, and a complete code example."
+description: "Use json-inference with DeepSeek via tool-calling to get structured JSON. Covers DeepseekInference setup, API key, deepseek-chat model, and retry logic."
 ---
 
 `json-inference` connects to DeepSeek using `InferenceName.DeepseekInference`. DeepSeek does not reliably support `response_format`, so the library falls back to the **tool-calling strategy**: your JSON schema is wrapped as a `provide_answer` tool, and the model is forced to call it via `tool_choice`. Arguments are extracted, repaired with `jsonrepair`, and validated — with up to **3 retries** (`MAX_ATTEMPTS = 3`) on failure.

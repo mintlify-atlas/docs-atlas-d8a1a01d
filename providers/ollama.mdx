@@ -1,7 +1,7 @@
 ---
-title: "Using Ollama for Local LLM Inference"
+title: "Ollama Local Inference: No API Key with json-inference"
 sidebarTitle: "Ollama"
-description: "Run structured LLM inference entirely on your machine with InferenceName.OllamaInference. No API key needed. Covers Ollama setup, model pulling, and a complete code example."
+description: "Run structured LLM inference locally using OllamaInference with no API key. Covers Ollama installation, model pulling, and complete code examples."
 ---
 
 `json-inference` supports fully local inference through `InferenceName.OllamaInference`, powered by [Ollama](https://ollama.com). Everything runs on your machine — no API key is required and no data leaves your network. The provider uses the **tool-calling strategy** via the `ollama` peer dependency, with up to **3 retries** (`MAX_ATTEMPTS = 3`) on failure.

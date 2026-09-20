@@ -1,7 +1,7 @@
 ---
 title: "InferFormat<T> — Derive TypeScript Types from JSON Schemas"
 sidebarTitle: "InferFormat"
-description: "Reference for the InferFormat<T> generic mapped type that derives TypeScript return types from a FormatModel schema automatically, without explicit type annotations."
+description: "Reference for InferFormat<T>, the mapped type that derives TypeScript return types from a FormatModel schema automatically without explicit annotations."
 ---
 
 `InferFormat<T>` is the mapped type that gives `generateObject()` its return type. It reads the `properties` map of your `FormatModel` schema at the type level and produces a plain TypeScript object type whose keys and value types mirror the schema exactly. Because TypeScript infers the generic `F` from the `params.format` argument, you get full autocomplete on the result object without writing a single type annotation. The same inference works in plain JavaScript projects — your IDE does the work for you.

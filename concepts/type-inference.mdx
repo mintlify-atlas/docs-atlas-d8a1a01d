@@ -1,7 +1,7 @@
 ---
 title: "Automatic TypeScript Type Inference from JSON Schemas"
 sidebarTitle: "Type Inference"
-description: "Learn how InferFormat<T> and InferProperty<T> map your JSON schema property types to TypeScript types, including nested objects, arrays, and plain-JS IDE support."
+description: "Learn how InferFormat<T> and InferProperty<T> map JSON schema types to TypeScript types, covering nested objects, typed arrays, and plain-JS IDE support."
 ---
 
 One of the core ergonomic features of `json-inference` is that the return type of `generateObject()` is automatically derived from the `format` schema you pass in. You never need to write a separate TypeScript interface, cast the result, or add `as const` to your schema — the inference happens at the type level, driven entirely by the shape of the `properties` you define.

@@ -1,7 +1,7 @@
 ---
-title: "Handle Errors and Failures in json-inference"
+title: "Handle Errors and Failures in json-inference Calls"
 sidebarTitle: "Error Handling"
-description: "Understand when json-inference throws errors for refusals, exhausted retries, and parse failures, and how to write resilient production wrappers around generateObject."
+description: "Learn when json-inference throws for refusals, exhausted retries, and parse failures, and how to write resilient production wrappers around generateObject."
 ---
 
 `json-inference` is designed to shield you from most transient LLM failures through its retry loop and JSON repair layer, but some conditions will always propagate as thrown `Error` objects. Understanding exactly when and why errors are thrown lets you write production code that handles them gracefully.
@@ -38,7 +38,7 @@ throw new Error("Model failed to use tool after maximum attempts");
 ```
 
 <Note>
-  Claude and most tool-calling providers allow up to **5** attempts (`MAX_ATTEMPTS = 5`). Ollama uses **3** attempts (`MAX_ATTEMPTS = 3`). These limits are set in the individual provider implementations.
+  Claude and Hugging Face allow up to **5** attempts (`MAX_ATTEMPTS = 5`). DeepSeek, Mistral, Alibaba, Groq, and Ollama each allow up to **3** attempts (`MAX_ATTEMPTS = 3`). These limits are set in the individual provider implementations.
 </Note>
 
 ### 3. JSON Parse Failure

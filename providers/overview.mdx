@@ -1,7 +1,7 @@
 ---
-title: "All Supported LLM Providers in json-inference"
+title: "All 12 LLM Providers Available in json-inference SDK"
 sidebarTitle: "Overview"
-description: "Browse all 12 LLM providers supported by json-inference, their InferenceName enum values, structured-output strategy, base URLs, and where to obtain API keys."
+description: "Browse all 12 LLM providers in json-inference: InferenceName enum values, response_format vs tool-calling strategy, base URLs, and API key sources."
 ---
 
 `json-inference` ships with built-in support for twelve LLM providers. Every provider is accessed through the same `generateObject()` function — you simply swap the `InferenceName` enum value to change providers. Under the hood, the library routes each call to either a native `response_format` path or a tool-calling path, depending on what the provider reliably supports.
@@ -13,8 +13,8 @@ description: "Browse all 12 LLM providers supported by json-inference, their Inf
 | OpenAI | `GPT5Inference` | `response_format` | `api.openai.com` | [platform.openai.com](https://platform.openai.com) |
 | Claude | `ClaudeInference` | tool-calling | `api.anthropic.com/v1/` | [console.anthropic.com](https://console.anthropic.com) |
 | DeepSeek | `DeepseekInference` | tool-calling | `api.deepseek.com` | [platform.deepseek.com](https://platform.deepseek.com) |
-| Grok | `GrokInference` | `response_format` | `api.x.ai/v1/` | [console.x.ai](https://console.x.ai) |
-| Mistral | `MistralInference` | tool-calling | `api.mistral.ai/v1/` | [console.mistral.ai](https://console.mistral.ai) |
+| Grok | `GrokInference` | `response_format` | `api.x.ai/v1` | [console.x.ai](https://console.x.ai) |
+| Mistral | `MistralInference` | tool-calling | `api.mistral.ai/v1` | [console.mistral.ai](https://console.mistral.ai) |
 | Perplexity | `PerplexityInference` | `response_format` | `api.perplexity.ai` | [perplexity.ai/settings/api](https://perplexity.ai/settings/api) |
 | Cohere | `CohereInference` | `response_format` | `api.cohere.ai/compatibility/v1` | [dashboard.cohere.com](https://dashboard.cohere.com) |
 | Alibaba | `AlibabaInference` | tool-calling | `dashscope-intl.aliyuncs.com` | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |

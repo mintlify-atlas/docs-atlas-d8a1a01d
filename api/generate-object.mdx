@@ -1,7 +1,7 @@
 ---
-title: "generateObject() — Structured JSON from Any LLM"
+title: "generateObject() — Structured JSON from Any LLM Provider"
 sidebarTitle: "generateObject()"
-description: "Full reference for generateObject(inferenceName, params, model, apiKey). Returns a typed JSON object inferred from your FormatModel schema via InferFormat<F>."
+description: "Reference for generateObject(inferenceName, params, model, apiKey). Returns a typed JSON object derived from your FormatModel schema via InferFormat<F>."
 ---
 
 `generateObject()` is the primary function in `json-inference`. It sends your schema and conversation history to any of the 12 supported providers and returns a fully-typed JavaScript object whose shape is derived at compile time from your `FormatModel` definition. Internally, it routes to either a native `response_format` path or a tool-calling `provide_answer` strategy, retries up to five times on malformed output, repairs broken JSON with `jsonrepair`, and validates required fields before resolving.

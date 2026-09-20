@@ -1,7 +1,7 @@
 ---
-title: "Install json-inference and Peer Dependencies"
+title: "json-inference Installation: npm, ESM, and TypeScript"
 sidebarTitle: "Installation"
-description: "Install json-inference alongside its three peer dependencies — openai, ollama, and groq-sdk — to unlock all 12 supported LLM providers with a single command."
+description: "Install json-inference alongside openai, ollama, and groq-sdk to unlock all 12 LLM providers. Covers ESM/CJS entry points and TypeScript support."
 ---
 
 `json-inference` ships as a small core package that delegates provider communication to three well-maintained SDK peer dependencies. Installing all of them up front means every provider is immediately available — no conditional imports, no optional requires.
@@ -57,8 +57,8 @@ The `exports` field in `package.json` handles resolution automatically — your 
 {
   "exports": {
     "require": "./build/index.cjs",
-    "import":  "./build/index.mjs",
     "types":   "./types.d.ts",
+    "import":  "./build/index.mjs",
     "default": "./build/index.cjs"
   }
 }

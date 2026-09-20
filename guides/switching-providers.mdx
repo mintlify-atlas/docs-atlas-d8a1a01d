@@ -1,7 +1,7 @@
 ---
 title: "Switch Between LLM Providers Without Changing Your Schema"
 sidebarTitle: "Switching Providers"
-description: "Route the same schema and messages to any of the 12 supported LLM providers by changing a single InferenceName argument — no application logic changes required."
+description: "Swap a single InferenceName argument to route any schema and message array to any of the 12 supported LLM providers with no application logic changes."
 ---
 
 The core design principle of `json-inference` is that your schema, your output format, and your conversation history are completely decoupled from the provider that processes them. You define a `format` schema once and pass the same `params` object to any of the 12 supported providers simply by swapping the `InferenceName` enum value and the corresponding model string.

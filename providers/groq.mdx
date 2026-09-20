@@ -1,7 +1,7 @@
 ---
-title: "Using Groq for Fast LLM Inference"
+title: "Groq Ultra-Fast Structured Output with json-inference"
 sidebarTitle: "Groq"
-description: "json-inference uses Groq's native SDK with tool-calling to deliver ultra-fast structured output. Covers API key, recommended models, and a complete usage example."
+description: "Use json-inference with Groq's SDK and tool-calling for fast structured output. Covers GroqInference, API key setup, model selection, and a code example."
 ---
 
 `json-inference` integrates with Groq through `InferenceName.GroqInference`. Groq provides extremely fast inference (often sub-second) via its custom Language Processing Unit (LPU) hardware. Because Groq does not reliably support `response_format`, the library uses the **tool-calling strategy** with the `groq-sdk` peer dependency — wrapping your JSON schema as a `provide_answer` tool and retrying up to **3 times** (`MAX_ATTEMPTS = 3`) on failure.

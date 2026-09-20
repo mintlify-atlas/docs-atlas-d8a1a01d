@@ -1,7 +1,7 @@
 ---
 title: "json-inference: Structured JSON from 12 LLM Providers"
 sidebarTitle: "Introduction"
-description: "json-inference solves broken structured output across LLM providers using a tool-calling strategy — one function call returns typed, validated JSON from any of 12 providers."
+description: "json-inference returns typed, validated JSON from 12 providers via generateObject(). Tool-calling or response_format is chosen per provider automatically."
 ---
 
 `json-inference` is a zero-boilerplate TypeScript/JavaScript library that delivers structured, schema-validated JSON from 12 different LLM providers through a single `generateObject()` function. Whether you're building an AI-powered trading signal parser, a sentiment analyzer, or any pipeline that needs reliable machine-readable output from a language model, this library handles the hard parts — malformed JSON, missing fields, provider inconsistencies — so you don't have to.
@@ -68,10 +68,13 @@ import { generateObject } from "json-inference";
 import { InferenceName } from "json-inference";
 
 // Types (TypeScript)
-import type { IOutlineParams, FormatModel, FormatProperty, InferFormat } from "json-inference";
+import type { IOutlineParams, ITextParams, FormatModel, FormatProperty, FormatItems, InferFormat } from "json-inference";
 
 // Utilities
 import { generateText } from "json-inference";
+import { validateToolArguments, validateValue, typeOf } from "json-inference";
+import { MessageModel, MessageRole } from "json-inference";
+import { toOpenAIMessages, toOllamaMessages, toDataUrl, stripDataUrl } from "json-inference";
 ```
 
 <Note>

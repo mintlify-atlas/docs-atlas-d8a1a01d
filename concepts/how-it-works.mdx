@@ -1,7 +1,7 @@
 ---
-title: "How json-inference Generates Structured Output"
+title: "How json-inference Generates Structured JSON Output"
 sidebarTitle: "How It Works"
-description: "Understand the two execution strategies, the RunnerAdapter provider registry, and the full request-to-JSON lifecycle powering every generateObject() call."
+description: "Understand the two execution strategies, the RunnerAdapter registry, and the full request-to-JSON lifecycle powering every generateObject() call."
 ---
 
 Every call to `generateObject()` routes through a unified pipeline that abstracts away the differences between twelve LLM providers. Depending on the provider you select, the library transparently switches between two strategies — native `response_format` for providers that support it, and a tool-calling shim for those that don't — while exposing an identical API surface in both cases.
@@ -89,6 +89,16 @@ export class RunnerAdapter {
   ): Promise<MessageModel> => {
     const runner = this.getRunner(inferenceName);
     return await runner.getOutlineCompletion(params, model, apiKey);
+  };
+
+  public getTextCompletion = async (
+    inferenceName: InferenceName,
+    params: ITextParams,
+    model: string,
+    apiKey?: string
+  ): Promise<MessageModel> => {
+    const runner = this.getRunner(inferenceName);
+    return await runner.getTextCompletion(params, model, apiKey);
   };
 
   public registerRunner = (name: InferenceName, runner: RunnerClass) => {

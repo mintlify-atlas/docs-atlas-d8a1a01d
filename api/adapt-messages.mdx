@@ -1,7 +1,7 @@
 ---
-title: "Message Adapter Utilities: toOpenAIMessages and toOllamaMessages"
+title: "Message Adapter Utilities for json-inference Providers"
 sidebarTitle: "Message Adapters"
-description: "Reference for toOpenAIMessages, toOllamaMessages, toDataUrl, and stripDataUrl — utilities for adapting MessageModel arrays to provider wire formats with image support."
+description: "Adapter utilities exported from json-inference for converting MessageModel arrays into provider wire formats, with full multi-modal image support."
 ---
 
 Every provider in `json-inference` speaks a slightly different wire format for multi-modal messages. Rather than scattering that translation logic across provider implementations, the library centralises it in four exported utilities. You can call them directly whenever you need to build a request payload outside the built-in provider wrappers, or when you want fine-grained control over how images are encoded before being sent to an API.

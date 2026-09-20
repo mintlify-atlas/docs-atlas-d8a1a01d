@@ -1,7 +1,7 @@
 ---
-title: "Retry Logic and JSON Repair for Resilient Output"
+title: "Retry Logic and JSON Repair for Resilient LLM Output"
 sidebarTitle: "Retry & Repair"
-description: "Discover how json-inference handles malformed LLM responses using jsonrepair, validateToolArguments, and up to 5 automatic retries for tool-calling providers."
+description: "How json-inference auto-repairs malformed LLM output using jsonrepair and validateToolArguments, with 3–5 retry attempts across all tool-calling providers."
 ---
 
 LLMs that don't natively support structured output regularly return malformed JSON, skip tool calls entirely, or refuse a request. `json-inference` handles all of these failure modes automatically through a combination of JSON repair, schema validation, and a bounded retry loop — so your application code never has to deal with raw provider failures.
@@ -11,15 +11,15 @@ LLMs that don't natively support structured output regularly return malformed JS
 The retry mechanism only applies to **tool-calling** providers. `response_format` providers (OpenAI, Grok, Perplexity, Cohere, GLM-4) rely on native structured output support and make a single API call — if the provider returns a refusal, an error is thrown immediately.
 
 <CardGroup cols={2}>
-  <Card title="Retry loop (up to 5 attempts)" icon="rotate-right">
+  <Card title="Retry loop (3–5 attempts per provider)" icon="rotate-right">
     Tool-calling providers:
-    - Claude (`ClaudeInference`)
-    - DeepSeek (`DeepseekInference`)
-    - Mistral (`MistralInference`)
-    - Hugging Face (`HfInference`)
-    - Ollama (`OllamaInference`)
-    - Alibaba (`AlibabaInference`)
-    - Groq (`GroqInference`)
+    - Claude (`ClaudeInference`) — 5 attempts
+    - Hugging Face (`HfInference`) — 5 attempts
+    - DeepSeek (`DeepseekInference`) — 3 attempts
+    - Mistral (`MistralInference`) — 3 attempts
+    - Ollama (`OllamaInference`) — 3 attempts
+    - Alibaba (`AlibabaInference`) — 3 attempts
+    - Groq (`GroqInference`) — 3 attempts
   </Card>
   <Card title="Single attempt, no retry" icon="circle-check">
     `response_format` providers:
@@ -33,7 +33,7 @@ The retry mechanism only applies to **tool-calling** providers. `response_format
 
 ## The Retry Loop Step by Step
 
-The following trace follows the Claude provider implementation (`ClaudeProvider.client.ts`), which is representative of all tool-calling providers. `MAX_ATTEMPTS` is set to `5`.
+The following trace follows the Claude provider implementation (`ClaudeProvider.client.ts`), which is representative of all tool-calling providers. Each provider sets its own `MAX_ATTEMPTS` constant: Claude and Hugging Face use `5`; DeepSeek, Mistral, Ollama, Alibaba, and Groq use `3`.
 
 <Steps>
   <Step title="Build the provide_answer tool and system prompt">

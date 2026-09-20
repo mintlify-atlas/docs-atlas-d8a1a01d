@@ -104,7 +104,7 @@ const reply = await generateText(
 Replay the full conversation history by appending prior `assistant` responses as `assistant` messages.
 
 ```typescript
-import { generateText, InferenceName } from 'json-inference';
+import { generateText, InferenceName, type MessageModel } from 'json-inference';
 
 const history: MessageModel[] = [
   { role: "system",    content: "You are a helpful geography tutor." },

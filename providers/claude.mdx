@@ -1,7 +1,7 @@
 ---
-title: "Using Anthropic Claude with json-inference"
+title: "Anthropic Claude Structured Output via json-inference"
 sidebarTitle: "Claude"
-description: "json-inference drives Claude via a forced provide_answer tool call, with up to 5 automatic retries. Covers API key setup, recommended models, and a complete code example."
+description: "Use json-inference with Claude via provide_answer tool-calling and up to 5 retries. Covers ClaudeInference setup, API key, models, and a code example."
 ---
 
 `json-inference` integrates with Anthropic Claude using `InferenceName.ClaudeInference`. Because Claude does not reliably honour `response_format`, the library uses a **tool-calling strategy**: your JSON schema is wrapped as a `provide_answer` tool, `tool_choice` forces the model to call it, and the arguments are extracted, repaired, and validated. The provider will retry this loop up to **5 times** (`MAX_ATTEMPTS = 5`) before throwing an error.

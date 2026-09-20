@@ -1,7 +1,7 @@
 ---
-title: "Attach Images to LLM Requests with json-inference"
+title: "Attach Images to LLM Requests Using json-inference"
 sidebarTitle: "Multimodal Images"
-description: "Include base64 images or data URLs in MessageModel.images and let toOpenAIMessages and toOllamaMessages adapt them automatically to each provider's wire format."
+description: "Attach base64 images or data URLs via MessageModel.images and let toOpenAIMessages and toOllamaMessages rewrite them for each provider's wire format."
 ---
 
 `json-inference` supports multimodal requests by letting you attach images directly to any `MessageModel` entry. The library ships two adapter functions — `toOpenAIMessages` and `toOllamaMessages` — that rewrite your messages into the wire format each provider expects. You provide images once; the adapters handle the rest.
