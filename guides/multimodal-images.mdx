@@ -1,0 +1,244 @@
+---
+title: "Attach Images to LLM Requests with json-inference"
+sidebarTitle: "Multimodal Images"
+description: "Include base64 images or data URLs in MessageModel.images and let toOpenAIMessages and toOllamaMessages adapt them automatically to each provider's wire format."
+---
+
+`json-inference` supports multimodal requests by letting you attach images directly to any `MessageModel` entry. The library ships two adapter functions — `toOpenAIMessages` and `toOllamaMessages` — that rewrite your messages into the wire format each provider expects. You provide images once; the adapters handle the rest.
+
+## The `MessageModel.images` Field
+
+The `images` field on `MessageModel` is an optional array of strings. Each string can be either a raw base64-encoded binary or a full `data:` URL — the adapters accept both forms and normalise them automatically.
+
+```typescript
+export interface MessageModel {
+  role: "assistant" | "system" | "user";
+  content: string;
+  /** Attached images: raw base64 strings or data: URLs. Providers adapt them to their own wire format. */
+  images?: string[];
+}
+```
+
+<Note>
+  `images` is optional. Messages without an `images` field (or with an empty array) pass through the adapters unchanged, so adding multimodal support does not break any existing text-only message arrays.
+</Note>
+
+## Helper Functions
+
+Two small utility functions handle the conversion between raw base64 and data URLs. Both are exported from `json-inference` and available for use in your own code.
+
+### `toDataUrl(image, mimeType?)`
+
+Converts a raw base64 string into a `data:` URL. If the input is already a `data:` URL it is returned unchanged.
+
+```typescript
+export const toDataUrl = (image: string, mimeType = "image/jpeg"): string =>
+  image.startsWith("data:") ? image : `data:${mimeType};base64,${image}`;
+```
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `image` | `string` | — | Raw base64 string or existing `data:` URL |
+| `mimeType` | `string` | `"image/jpeg"` | MIME type prepended when constructing the URL |
+
+```typescript
+// Raw base64 → data URL
+toDataUrl("/9j/4AAQ...");
+// → "data:image/jpeg;base64,/9j/4AAQ..."
+
+// Already a data URL → returned as-is
+toDataUrl("data:image/png;base64,iVBOR...");
+// → "data:image/png;base64,iVBOR..."
+
+// Custom MIME type
+toDataUrl("/9j/4AAQ...", "image/png");
+// → "data:image/png;base64,/9j/4AAQ..."
+```
+
+### `stripDataUrl(image)`
+
+Strips the `data:...;base64,` prefix from a data URL and returns the raw base64 string. If the input is already raw base64 it is returned unchanged.
+
+```typescript
+export const stripDataUrl = (image: string): string =>
+  image.startsWith("data:") ? image.slice(image.indexOf(",") + 1) : image;
+```
+
+```typescript
+// data URL → raw base64
+stripDataUrl("data:image/jpeg;base64,/9j/4AAQ...");
+// → "/9j/4AAQ..."
+
+// Already raw base64 → returned as-is
+stripDataUrl("/9j/4AAQ...");
+// → "/9j/4AAQ..."
+```
+
+## Wire Format Adapters
+
+### `toOpenAIMessages(messages)`
+
+Adapts a `MessageModel[]` to the OpenAI chat completions wire format. Messages without images pass through as plain `{ role, content }` objects. Messages with images have their `content` field converted into a content-part array containing a `text` part followed by one `image_url` part per image. Raw base64 strings are promoted to `data:` URLs via `toDataUrl`.
+
+```typescript
+export const toOpenAIMessages = (messages: MessageModel[]) =>
+  messages.map(({ role, content, images }) => {
+    if (!images?.length) {
+      return { role, content };
+    }
+    return {
+      role,
+      content: [
+        ...(content ? [{ type: "text", text: content }] : []),
+        ...images.map((image) => ({
+          type: "image_url",
+          image_url: { url: toDataUrl(image) },
+        })),
+      ],
+    };
+  });
+```
+
+**Example output for a message with one image:**
+
+```json
+{
+  "role": "user",
+  "content": [
+    { "type": "text", "text": "What is in this image?" },
+    {
+      "type": "image_url",
+      "image_url": {
+        "url": "data:image/jpeg;base64,/9j/4AAQ..."
+      }
+    }
+  ]
+}
+```
+
+<Tip>
+  Claude, DeepSeek, Mistral, Alibaba, Hugging Face, Grok, Cohere, Perplexity, GLM-4, and Groq providers all use `toOpenAIMessages` internally, because they communicate through an OpenAI-compatible SDK or REST interface.
+</Tip>
+
+### `toOllamaMessages(messages)`
+
+Adapts a `MessageModel[]` to the Ollama chat wire format. Ollama keeps `content` as a plain string and places images in a separate top-level `images` array as raw base64 strings — the `data:` prefix is stripped via `stripDataUrl`.
+
+```typescript
+export const toOllamaMessages = (messages: MessageModel[]) =>
+  messages.map(({ role, content, images }) => {
+    if (!images?.length) {
+      return { role, content };
+    }
+    return {
+      role,
+      content,
+      images: images.map(stripDataUrl),
+    };
+  });
+```
+
+**Example output for a message with one image:**
+
+```json
+{
+  "role": "user",
+  "content": "What is in this image?",
+  "images": ["/9j/4AAQ..."]
+}
+```
+
+<Note>
+  The `OllamaProvider` uses `toOllamaMessages` internally. All other providers use `toOpenAIMessages`.
+</Note>
+
+## Sending an Image with `generateObject`
+
+The steps below show how to attach a local image file to a structured inference request.
+
+<Steps>
+  <Step title="Read and encode the image">
+    Load the image from disk and encode it as base64. You can also pass a `data:` URL directly if you already have one.
+
+    ```typescript
+    import fs from "fs";
+
+    const imageBuffer = fs.readFileSync("./screenshot.jpg");
+    const base64Image = imageBuffer.toString("base64");
+    // Or build the data URL yourself:
+    // const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+    ```
+  </Step>
+
+  <Step title="Build the message with the images field">
+    Attach the base64 string (or data URL) to the `images` array on the message. The `content` field can describe the task or be left as an empty string.
+
+    ```typescript
+    import { MessageModel } from "json-inference";
+
+    const messages: MessageModel[] = [
+      {
+        role: "user",
+        content: "Extract all visible text from this screenshot.",
+        images: [base64Image], // raw base64 or "data:image/jpeg;base64,..."
+      },
+    ];
+    ```
+  </Step>
+
+  <Step title="Call generateObject">
+    Pass the messages to `generateObject` as usual. The provider adapter handles image encoding automatically.
+
+    ```typescript
+    import { generateObject, InferenceName } from "json-inference";
+
+    const result = await generateObject(
+      InferenceName.GPT5Inference,
+      {
+        format: {
+          type: "object",
+          required: ["extracted_text"],
+          properties: {
+            extracted_text: {
+              type: "string",
+              description: "All text visible in the image",
+            },
+          },
+        },
+        messages,
+      },
+      "gpt-4o",
+      process.env.OPENAI_API_KEY,
+    );
+
+    console.log(result.extracted_text);
+    ```
+  </Step>
+</Steps>
+
+## Using a Different MIME Type
+
+When the image is not a JPEG, pass the correct MIME type to `toDataUrl` before placing the string in `images`:
+
+```typescript
+import { toDataUrl } from "json-inference";
+import fs from "fs";
+
+const pngBuffer = fs.readFileSync("./diagram.png");
+const base64Png = pngBuffer.toString("base64");
+
+// Explicitly tag as PNG so the data URL is correct
+const dataUrl = toDataUrl(base64Png, "image/png");
+
+const messages: MessageModel[] = [
+  {
+    role: "user",
+    content: "Describe the architecture shown in this diagram.",
+    images: [dataUrl],
+  },
+];
+```
+
+<Warning>
+  Not all models and providers support vision. Check the model's documentation before sending images. Passing images to a text-only model will typically result in the image being silently ignored or an API error being thrown.
+</Warning>

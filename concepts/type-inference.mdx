@@ -1,0 +1,265 @@
+---
+title: "Automatic TypeScript Type Inference from JSON Schemas"
+sidebarTitle: "Type Inference"
+description: "Learn how InferFormat<T> and InferProperty<T> map your JSON schema property types to TypeScript types, including nested objects, arrays, and plain-JS IDE support."
+---
+
+One of the core ergonomic features of `json-inference` is that the return type of `generateObject()` is automatically derived from the `format` schema you pass in. You never need to write a separate TypeScript interface, cast the result, or add `as const` to your schema — the inference happens at the type level, driven entirely by the shape of the `properties` you define.
+
+## The Types: `FormatModel`, `FormatProperty`, and `FormatItems`
+
+Everything starts with the `FormatModel` interface. This is the TypeScript representation of the JSON schema you pass as `params.format`:
+
+```typescript
+// src/model/Format.model.ts
+
+export interface FormatModel {
+  type: string;
+  required: string[];
+  properties: {
+    [key: string]: FormatProperty;
+  };
+}
+```
+
+Each entry in `properties` must conform to `FormatProperty`, which is a discriminated union keyed on the `type` field:
+
+```typescript
+export type FormatProperty =
+  | { type: "string";  description: string; enum?: string[] }
+  | { type: "number";  description: string }
+  | { type: "integer"; description: string }
+  | { type: "boolean"; description: string }
+  | { type: "array";   description: string; items?: FormatItems; minItems?: number; maxItems?: number }
+  | { type: "object";  description: string; required?: string[]; properties?: { [key: string]: FormatProperty } };
+```
+
+For array elements and nested object properties, the library uses `FormatItems` — a parallel type that makes `description` optional (since nested sub-schemas often don't need one):
+
+```typescript
+export type FormatItems =
+  | { type: "string";  description?: string; enum?: string[] }
+  | { type: "number";  description?: string }
+  | { type: "integer"; description?: string }
+  | { type: "boolean"; description?: string }
+  | { type: "array";   description?: string; items?: FormatItems; minItems?: number; maxItems?: number }
+  | { type: "object";  description?: string; required?: string[]; properties?: { [key: string]: FormatProperty } };
+```
+
+## How `InferProperty<T>` Works
+
+`InferProperty<T>` is the recursive conditional type that maps each `FormatProperty` variant to its corresponding TypeScript type. It uses TypeScript's conditional type chaining (a series of `extends` checks on the `type` literal) to discriminate each branch:
+
+```typescript
+// src/model/Format.model.ts
+
+type InferProperty<T> = T extends { type: "string" }
+  ? string
+  : T extends { type: "number" }
+    ? number
+    : T extends { type: "integer" }
+      ? number
+      : T extends { type: "boolean" }
+        ? boolean
+        : T extends { type: "array"; items: infer I }
+          ? InferProperty<I>[]
+          : T extends { type: "array" }
+            ? any[]
+            : T extends { type: "object"; properties: infer P }
+              ? { [K in keyof P]: InferProperty<P[K]> }
+              : T extends { type: "object" }
+                ? Record<string, any>
+                : any;
+```
+
+The ordering of the branches matters: the `array`+`items` branch is checked _before_ the bare `array` branch, so typed arrays are always preferred when `items` is present. The same logic applies to `object`+`properties` vs bare `object`.
+
+## The Full Type Mapping
+
+| Schema `type` | Has `items`? | Has `properties`? | TypeScript type |
+|---|---|---|---|
+| `"string"` | — | — | `string` |
+| `"number"` | — | — | `number` |
+| `"integer"` | — | — | `number` |
+| `"boolean"` | — | — | `boolean` |
+| `"array"` | No | — | `any[]` |
+| `"array"` | Yes (`items: I`) | — | `InferProperty<I>[]` |
+| `"object"` | — | No | `Record<string, any>` |
+| `"object"` | — | Yes (`properties: P`) | `{ [K in keyof P]: InferProperty<P[K]> }` |
+
+## `InferFormat<T>` — The Top-Level Mapped Type
+
+`InferFormat<T>` applies `InferProperty` across every key in your schema's `properties` map:
+
+```typescript
+export type InferFormat<T extends FormatModel> = {
+  [K in keyof T["properties"]]: InferProperty<T["properties"][K]>;
+};
+```
+
+This is what `generateObject()` returns: a mapped type where every property key comes from your schema and every value type is the TypeScript equivalent of the declared `type` string.
+
+## Worked Example: Flat Schema
+
+```typescript
+import { generateObject, InferenceName } from "json-inference";
+
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  {
+    format: {
+      type: "object",
+      required: ["sentiment", "confidence", "flagged"],
+      properties: {
+        sentiment:  { type: "string",  description: "positive, negative, or neutral" },
+        confidence: { type: "number",  description: "Score between 0 and 1" },
+        flagged:    { type: "boolean", description: "True if content needs review" },
+      },
+    },
+    messages: [{ role: "user", content: "Analyze: 'This is fantastic!'" }],
+  },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+
+// TypeScript infers the return type as:
+// {
+//   sentiment:  string;
+//   confidence: number;
+//   flagged:    boolean;
+// }
+
+console.log(result.sentiment);   // string ✓
+console.log(result.confidence);  // number ✓
+console.log(result.flagged);     // boolean ✓
+```
+
+## Worked Example: Nested Objects and Typed Arrays
+
+When a property has `type: "object"` with `properties`, or `type: "array"` with `items`, the inference recurses through `InferProperty` automatically:
+
+```typescript
+const result = await generateObject(
+  InferenceName.DeepseekInference,
+  {
+    format: {
+      type: "object",
+      required: ["title", "tags", "author"],
+      properties: {
+        title: { type: "string", description: "Article title" },
+        tags:  {
+          type: "array",
+          description: "Topic tags",
+          items: { type: "string" },   // FormatItems — description is optional
+        },
+        author: {
+          type: "object",
+          description: "Author details",
+          properties: {
+            name:  { type: "string",  description: "Full name" },
+            karma: { type: "integer", description: "Reputation score" },
+          },
+        },
+      },
+    },
+    messages: [{ role: "user", content: "Summarize this article..." }],
+  },
+  "deepseek-chat",
+  process.env.DEEPSEEK_API_KEY,
+);
+
+// Inferred return type:
+// {
+//   title:  string;
+//   tags:   string[];       // items: { type: "string" } → InferProperty<I>[]
+//   author: {
+//     name:  string;
+//     karma: number;        // integer → number
+//   };
+// }
+```
+
+<Note>
+  `FormatItems` is used for the `items` field (and nested `properties` values
+  inside array item schemas) because sub-schemas don't require a `description`.
+  Top-level `properties` values always use `FormatProperty`, which mandates
+  `description`.
+</Note>
+
+## Works in Plain JavaScript
+
+`InferFormat<T>` inference is entirely structural — TypeScript infers it by analyzing the literal types in the object you pass. This means you get IDE autocomplete and type hints in JavaScript projects (`.js` files) without writing any TypeScript, adding `as const`, or specifying explicit generic parameters.
+
+<CodeGroup>
+```javascript JavaScript (no explicit types)
+// ✅ IDE still knows result.price is number, result.side is string
+const result = await generateObject(
+  InferenceName.GroqInference,
+  {
+    format: {
+      type: "object",
+      required: ["side", "price"],
+      properties: {
+        side:  { type: "string", description: "buy or sell" },
+        price: { type: "number", description: "Execution price" },
+      },
+    },
+    messages,
+  },
+  "llama-3.3-70b-versatile",
+  process.env.GROQ_API_KEY,
+);
+```
+
+```typescript TypeScript (explicit generic, optional)
+// You can also be explicit — but it's never required
+import type { FormatModel, InferFormat } from "json-inference";
+
+const mySchema = {
+  type: "object",
+  required: ["side", "price"],
+  properties: {
+    side:  { type: "string" as const,  description: "buy or sell" },
+    price: { type: "number" as const,  description: "Execution price" },
+  },
+} satisfies FormatModel;
+
+const result = await generateObject(
+  InferenceName.GroqInference,
+  { format: mySchema, messages },
+  "llama-3.3-70b-versatile",
+  process.env.GROQ_API_KEY,
+);
+```
+</CodeGroup>
+
+<Tip>
+  `as const` is **not** required on the schema object. TypeScript infers the
+  literal `type` strings directly from the inline object literal. Only use
+  `as const` if you store the schema in a separate variable and TypeScript
+  widens the type strings to `string`.
+</Tip>
+
+## Enum Constraints
+
+String properties can include an `enum` array to restrict the accepted values. This is carried through by the `FormatProperty` and `FormatItems` types, validated at runtime by `validateToolArguments`, but the inferred TypeScript type remains `string` (not a string literal union):
+
+```typescript
+properties: {
+  direction: {
+    type: "string",
+    description: "Trade direction",
+    enum: ["long", "short", "wait"],
+  },
+}
+// result.direction → string (validated at runtime to be "long" | "short" | "wait")
+```
+
+<Accordion title="Why doesn't enum produce a union type like 'long' | 'short' | 'wait'?">
+  TypeScript would need the `enum` array to be typed as a `readonly` tuple of
+  string literals (e.g., `["long", "short", "wait"] as const`) for
+  `InferProperty` to extract a union type. The `FormatProperty` union only
+  types `enum` as `string[] | undefined`, so the conditional type branches on
+  `{ type: "string" }` and resolves to `string`. Runtime validation via
+  `validateToolArguments` still rejects values that aren't in the enum.
+</Accordion>

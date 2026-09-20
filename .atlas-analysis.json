@@ -1,0 +1,113 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "json-inference",
+  "projectDescription": "A TypeScript/JavaScript library that delivers structured, schema-validated JSON output from 12 LLM providers through a single `generateObject()` function call.",
+  "theme": "luma",
+  "primaryColor": "#1f70c2",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/how-it-works",
+              "concepts/type-inference",
+              "concepts/retry-and-repair"
+            ]
+          },
+          {
+            "group": "Providers",
+            "pages": [
+              "providers/overview",
+              "providers/openai",
+              "providers/claude",
+              "providers/deepseek",
+              "providers/groq",
+              "providers/ollama",
+              "providers/other-providers"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/switching-providers",
+              "guides/multimodal-images",
+              "guides/generate-text",
+              "guides/error-handling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Functions",
+            "pages": [
+              "api/generate-object",
+              "api/generate-text"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/inference-name",
+              "api/format-model",
+              "api/message-model",
+              "api/infer-format"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/validate-tool-arguments",
+              "api/adapt-messages"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Single `generateObject()` function works across 12 LLM providers",
+    "Automatic return type inference from JSON schema via `InferFormat<T>`",
+    "Tool-calling strategy forces structured output on providers lacking native `response_format` support",
+    "JSON repair via `jsonrepair` and up to 5 automatic retries on malformed output",
+    "Schema validation of required fields before returning results",
+    "Multimodal support: attach base64 images to messages",
+    "`generateText()` for plain-text completions using the same unified API",
+    "Zero boilerplate: no per-provider client setup required"
+  ],
+  "publicApiSurface": [
+    "generateObject(inferenceName, params, model, apiKey?): Promise<InferFormat<F>>",
+    "generateText(inferenceName, params, model, apiKey?): Promise<string>",
+    "InferenceName (enum: GPT5Inference, ClaudeInference, DeepseekInference, GrokInference, MistralInference, PerplexityInference, CohereInference, AlibabaInference, HfInference, OllamaInference, GLM4Inference, GroqInference)",
+    "IOutlineParams<F> (interface: { format: F; messages: MessageModel[] })",
+    "ITextParams (interface: { messages: MessageModel[] })",
+    "FormatModel (interface: { type, required, properties })",
+    "FormatProperty (discriminated union by type: string | number | integer | boolean | array | object)",
+    "FormatItems (array item schema type)",
+    "InferFormat<T extends FormatModel> (mapped type)",
+    "MessageModel (interface: { role, content, images? })",
+    "MessageRole (type: 'assistant' | 'system' | 'user')",
+    "validateToolArguments(parsedArguments, schema): ValidationResult<T>",
+    "validateValue(value, schema, path): string | null",
+    "typeOf(value): string",
+    "toOpenAIMessages(messages): OpenAI-compatible message array",
+    "toOllamaMessages(messages): Ollama-compatible message array",
+    "toDataUrl(image, mimeType?): string",
+    "stripDataUrl(image): string"
+  ]
+}

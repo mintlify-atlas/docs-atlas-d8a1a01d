@@ -1,0 +1,289 @@
+---
+title: "validateToolArguments, validateValue, and typeOf Utilities"
+sidebarTitle: "Validation"
+description: "Reference for validateToolArguments(), validateValue(), and typeOf() — the schema validation utilities exported from json-inference for reuse in your own code."
+---
+
+The `json-inference` library exposes its internal schema validation layer as first-class exports, letting you reuse the same logic that guards every tool call in your own pipelines. All three utilities — `validateToolArguments`, `validateValue`, and `typeOf` — are pure functions with no side effects and no dependency on any provider, making them safe to use anywhere in your application.
+
+---
+
+## `validateToolArguments`
+
+Validates a parsed JSON object against a `FormatModel` schema. This is the top-level entry point used internally whenever an LLM response is decoded: it first checks that all `required` fields are present, then delegates per-field validation to [`validateValue`](#validatevalue).
+
+```typescript
+validateToolArguments<T = any>(
+  parsedArguments: unknown,
+  schema: FormatModel
+): ValidationResult<T>
+```
+
+### Parameters
+
+<ParamField path="parsedArguments" type="unknown" required>
+  The decoded JSON value to validate — typically the result of `JSON.parse()` on
+  a raw LLM response. Pass `null` or `undefined` to represent an empty argument
+  list; the function will accept it only when `schema.required` is empty.
+</ParamField>
+
+<ParamField path="schema" type="FormatModel" required>
+  The `FormatModel` describing the expected shape of `parsedArguments`. The
+  `required` array and `properties` map are consulted during validation.
+
+  ```typescript
+  interface FormatModel {
+    type: string;
+    required: string[];
+    properties: {
+      [key: string]: FormatProperty;
+    };
+  }
+  ```
+</ParamField>
+
+### Return value
+
+```typescript
+interface ValidationResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+```
+
+<ResponseField name="success" type="boolean">
+  `true` when all required fields are present and every present field passes its
+  type check; `false` otherwise.
+</ResponseField>
+
+<ResponseField name="data" type="T">
+  The original `parsedArguments` value cast to `T`. Only set when `success` is
+  `true`.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  A human-readable description of the first validation failure encountered. Only
+  set when `success` is `false`.
+</ResponseField>
+
+### Validation logic
+
+1. **Null / undefined arguments** — If `parsedArguments` is `null` or `undefined` and `schema.required` is non-empty, returns `{ success: false, error: "Tool call has empty arguments" }`. If `required` is empty, returns `{ success: true, data: {} }`.
+2. **Required field check** — Compares `schema.required` against the keys of `parsedArguments`. Returns the first error listing any missing fields.
+3. **Per-field validation** — Iterates `schema.properties` and calls `validateValue` for each key that exists in `parsedArguments`. Stops and returns on the first error.
+
+<Note>
+  Fields present in `parsedArguments` but absent from `schema.properties` are
+  silently ignored — the validator is not strict about extra keys.
+</Note>
+
+### Example — standalone pre-validation
+
+<CodeGroup>
+
+```typescript Basic usage
+import { validateToolArguments } from "json-inference";
+import type { FormatModel } from "json-inference";
+
+const schema: FormatModel = {
+  type: "object",
+  required: ["city", "units"],
+  properties: {
+    city: { type: "string", description: "City name" },
+    units: {
+      type: "string",
+      description: "Temperature units",
+      enum: ["celsius", "fahrenheit"],
+    },
+    days: { type: "integer", description: "Forecast days" },
+  },
+};
+
+const raw = JSON.parse('{"city":"Berlin","units":"celsius","days":5}');
+
+const result = validateToolArguments<{ city: string; units: string; days: number }>(
+  raw,
+  schema
+);
+
+if (result.success) {
+  console.log(result.data.city); // "Berlin"
+} else {
+  console.error(result.error);
+}
+```
+
+```typescript Handling failure
+import { validateToolArguments } from "json-inference";
+import type { FormatModel } from "json-inference";
+
+const schema: FormatModel = {
+  type: "object",
+  required: ["query"],
+  properties: {
+    query: { type: "string", description: "Search query" },
+    limit: { type: "integer", description: "Max results" },
+  },
+};
+
+// Missing required field
+const result = validateToolArguments({}, schema);
+// { success: false, error: "Missing required fields: query" }
+
+// Wrong type
+const result2 = validateToolArguments({ query: "cats", limit: "ten" }, schema);
+// { success: false, error: "Invalid arguments: limit: expected integer, got string" }
+```
+
+</CodeGroup>
+
+---
+
+## `validateValue`
+
+Validates a single value against a schema fragment. Used recursively by `validateToolArguments` for each property, and for each element of arrays and sub-object properties.
+
+```typescript
+validateValue(value: unknown, schema: any, path: string): string | null
+```
+
+### Parameters
+
+<ParamField path="value" type="unknown" required>
+  The value to check.
+</ParamField>
+
+<ParamField path="schema" type="any" required>
+  A schema fragment with at least a `type` field. Supported types: `"string"`,
+  `"number"`, `"integer"`, `"boolean"`, `"array"`, `"object"`. If `schema` is
+  absent, not an object, or has no `type`, the function returns `null`
+  (no error).
+</ParamField>
+
+<ParamField path="path" type="string" required>
+  A dot-notation path used in error messages to pinpoint the failing field, e.g.
+  `"address.zipCode"` or `"tags[2]"`. Pass the property name at the top level
+  and the function builds deeper paths automatically during recursion.
+</ParamField>
+
+### Return value
+
+Returns `null` on success, or a non-empty string describing the first error found. The error string always starts with the `path` value so callers can surface it directly to users or logs.
+
+### Type-specific rules
+
+| Schema type | Checks performed |
+|---|---|
+| `"string"` | `typeof value === "string"`; if `enum` present, value must be in the enum array |
+| `"number"` | `typeof value === "number"` and not `NaN` |
+| `"integer"` | `typeof value === "number"` and `Number.isInteger(value)` |
+| `"boolean"` | `typeof value === "boolean"` |
+| `"array"` | `Array.isArray(value)`; respects `minItems` / `maxItems`; recurses into each element via `schema.items` |
+| `"object"` | Not null, not array; checks `schema.required` for missing keys; recurses into each present property via `schema.properties` |
+
+<Tip>
+  For array schemas, validation stops at the **first** invalid element. The
+  error path includes the index, e.g. `tags[2]: expected string, got number`.
+</Tip>
+
+### Example — validating a single value
+
+<CodeGroup>
+
+```typescript String with enum
+import { validateValue } from "json-inference";
+
+const schema = {
+  type: "string",
+  enum: ["asc", "desc"],
+};
+
+validateValue("asc", schema, "order");    // null  ✓
+validateValue("random", schema, "order"); // 'order: expected one of [asc, desc], got "random"'
+validateValue(42, schema, "order");       // "order: expected string, got number"
+```
+
+```typescript Nested object
+import { validateValue } from "json-inference";
+
+const schema = {
+  type: "object",
+  required: ["lat", "lng"],
+  properties: {
+    lat: { type: "number", description: "Latitude" },
+    lng: { type: "number", description: "Longitude" },
+  },
+};
+
+validateValue({ lat: 52.5, lng: 13.4 }, schema, "coords"); // null  ✓
+validateValue({ lat: 52.5 }, schema, "coords");
+// "coords: missing required fields: lng"
+
+validateValue({ lat: "52.5", lng: 13.4 }, schema, "coords");
+// "coords.lat: expected number, got string"
+```
+
+```typescript Array with item validation
+import { validateValue } from "json-inference";
+
+const schema = {
+  type: "array",
+  minItems: 1,
+  maxItems: 3,
+  items: { type: "integer" },
+};
+
+validateValue([1, 2, 3], schema, "ids");       // null  ✓
+validateValue([], schema, "ids");              // "ids: expected at least 1 items, got 0"
+validateValue([1, "two", 3], schema, "ids");   // "ids[1]: expected integer, got string"
+```
+
+</CodeGroup>
+
+---
+
+## `typeOf`
+
+A lightweight runtime type helper that fixes the two well-known gaps in the native `typeof` operator: it correctly returns `"null"` for `null` (instead of `"object"`) and `"array"` for arrays (instead of `"object"`).
+
+```typescript
+typeOf(value: unknown): string
+```
+
+### Parameters
+
+<ParamField path="value" type="unknown" required>
+  Any JavaScript value.
+</ParamField>
+
+### Return value
+
+| Input | Return value |
+|---|---|
+| `null` | `"null"` |
+| Any array | `"array"` |
+| Everything else | Result of `typeof value` (e.g. `"string"`, `"number"`, `"boolean"`, `"object"`, `"undefined"`, `"function"`) |
+
+<Warning>
+  `typeOf` does **not** differentiate between plain objects and class instances —
+  both return `"object"`, matching the behaviour of `typeof`. Use it for the
+  same primitive discrimination you would use `typeof` for, plus the null/array
+  fixes.
+</Warning>
+
+### Example
+
+```typescript
+import { typeOf } from "json-inference";
+
+typeOf(null);        // "null"     ← native typeof returns "object"
+typeOf([1, 2, 3]);   // "array"    ← native typeof returns "object"
+typeOf({});          // "object"
+typeOf("hello");     // "string"
+typeOf(42);          // "number"
+typeOf(true);        // "boolean"
+typeOf(undefined);   // "undefined"
+```
+
+`validateValue` uses `typeOf` internally to produce precise error messages like `"expected string, got null"` instead of the misleading `"expected string, got object"` that native `typeof` would produce.

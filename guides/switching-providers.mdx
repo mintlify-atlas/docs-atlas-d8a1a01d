@@ -1,0 +1,283 @@
+---
+title: "Switch Between LLM Providers Without Changing Your Schema"
+sidebarTitle: "Switching Providers"
+description: "Route the same schema and messages to any of the 12 supported LLM providers by changing a single InferenceName argument — no application logic changes required."
+---
+
+The core design principle of `json-inference` is that your schema, your output format, and your conversation history are completely decoupled from the provider that processes them. You define a `format` schema once and pass the same `params` object to any of the 12 supported providers simply by swapping the `InferenceName` enum value and the corresponding model string.
+
+## The Key Insight
+
+Every call to `generateObject` follows the same three-part structure: **what to return** (`format`), **what to say** (`messages`), and **who to ask** (`InferenceName` + `model`). Only the last part changes when you switch providers.
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+// Define your schema and messages ONCE
+const params = {
+  format: {
+    type: "object",
+    required: ["sentiment", "confidence"],
+    properties: {
+      sentiment: { type: "string", description: "positive, negative, or neutral" },
+      confidence: { type: "number", description: "Confidence score between 0 and 1" },
+    },
+  },
+  messages: [
+    { role: "user", content: "Analyze sentiment: 'This product is amazing!'" },
+  ],
+};
+
+// Swap only InferenceName + model to change provider
+const result = await generateObject(
+  InferenceName.GPT5Inference,   // ← change this
+  params,                         // ← stays the same
+  "gpt-4o",                       // ← and this
+  process.env.OPENAI_API_KEY,
+);
+```
+
+## All 12 Providers at a Glance
+
+<CardGroup cols={3}>
+  <Card title="OpenAI" icon="bolt">
+    `GPT5Inference` — `response_format` strategy. Native JSON schema output.
+  </Card>
+  <Card title="Claude" icon="robot">
+    `ClaudeInference` — tool-calling strategy. Up to 5 retry attempts.
+  </Card>
+  <Card title="DeepSeek" icon="magnifying-glass">
+    `DeepseekInference` — tool-calling strategy. OpenAI-compatible SDK.
+  </Card>
+  <Card title="Grok" icon="x">
+    `GrokInference` — `response_format` strategy. Single attempt.
+  </Card>
+  <Card title="Mistral" icon="wind">
+    `MistralInference` — tool-calling strategy. OpenAI-compatible SDK.
+  </Card>
+  <Card title="Perplexity" icon="circle-question">
+    `PerplexityInference` — `response_format` strategy.
+  </Card>
+  <Card title="Cohere" icon="c">
+    `CohereInference` — `response_format` strategy.
+  </Card>
+  <Card title="Alibaba" icon="cloud">
+    `AlibabaInference` — tool-calling strategy.
+  </Card>
+  <Card title="Hugging Face" icon="face-smile">
+    `HfInference` — tool-calling strategy.
+  </Card>
+  <Card title="Ollama" icon="server">
+    `OllamaInference` — tool-calling strategy. No API key needed for local.
+  </Card>
+  <Card title="GLM-4" icon="star">
+    `GLM4Inference` — `response_format` strategy. Z.ai endpoint.
+  </Card>
+  <Card title="Groq" icon="gauge-high">
+    `GroqInference` — tool-calling strategy. Uses `groq-sdk`.
+  </Card>
+</CardGroup>
+
+## Provider-by-Provider Examples
+
+The `params` object below is identical across every tab — only `InferenceName`, `model`, and the API key variable change.
+
+<Tabs>
+  <Tab title="OpenAI">
+    ```typescript
+    import { generateObject, InferenceName } from 'json-inference';
+
+    const result = await generateObject(
+      InferenceName.GPT5Inference,
+      params,
+      "gpt-4o",
+      process.env.OPENAI_API_KEY,
+    );
+    ```
+  </Tab>
+  <Tab title="Claude">
+    ```typescript
+    import { generateObject, InferenceName } from 'json-inference';
+
+    const result = await generateObject(
+      InferenceName.ClaudeInference,
+      params,
+      "claude-3-5-sonnet-20241022",
+      process.env.ANTHROPIC_API_KEY,
+    );
+    ```
+  </Tab>
+  <Tab title="DeepSeek">
+    ```typescript
+    import { generateObject, InferenceName } from 'json-inference';
+
+    const result = await generateObject(
+      InferenceName.DeepseekInference,
+      params,
+      "deepseek-chat",
+      process.env.DEEPSEEK_API_KEY,
+    );
+    ```
+  </Tab>
+  <Tab title="Ollama">
+    ```typescript
+    import { generateObject, InferenceName } from 'json-inference';
+
+    // Ollama runs locally — apiKey is optional
+    const result = await generateObject(
+      InferenceName.OllamaInference,
+      params,
+      "llama3.3:70b",
+      // no API key needed for local Ollama
+    );
+    ```
+  </Tab>
+  <Tab title="Groq">
+    ```typescript
+    import { generateObject, InferenceName } from 'json-inference';
+
+    const result = await generateObject(
+      InferenceName.GroqInference,
+      params,
+      "llama-3.3-70b-versatile",
+      process.env.GROQ_API_KEY,
+    );
+    ```
+  </Tab>
+  <Tab title="Grok">
+    ```typescript
+    import { generateObject, InferenceName } from 'json-inference';
+
+    const result = await generateObject(
+      InferenceName.GrokInference,
+      params,
+      "grok-2-latest",
+      process.env.GROK_API_KEY,
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## Environment Variable Pattern
+
+Store all API keys in environment variables and never hard-code them. A `.env` file (excluded from version control) keeps them out of your source:
+
+```bash
+# .env
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+DEEPSEEK_API_KEY=sk-...
+GROQ_API_KEY=gsk_...
+GROK_API_KEY=xai-...
+MISTRAL_API_KEY=...
+PERPLEXITY_API_KEY=pplx-...
+COHERE_API_KEY=...
+ALIBABA_API_KEY=...
+HF_API_KEY=hf_...
+GLM4_API_KEY=...
+```
+
+Reference them in code via `process.env`:
+
+```typescript
+const apiKeys: Record<InferenceName, string | undefined> = {
+  [InferenceName.GPT5Inference]:        process.env.OPENAI_API_KEY,
+  [InferenceName.ClaudeInference]:      process.env.ANTHROPIC_API_KEY,
+  [InferenceName.DeepseekInference]:    process.env.DEEPSEEK_API_KEY,
+  [InferenceName.GroqInference]:        process.env.GROQ_API_KEY,
+  [InferenceName.GrokInference]:        process.env.GROK_API_KEY,
+  [InferenceName.MistralInference]:     process.env.MISTRAL_API_KEY,
+  [InferenceName.PerplexityInference]:  process.env.PERPLEXITY_API_KEY,
+  [InferenceName.CohereInference]:      process.env.COHERE_API_KEY,
+  [InferenceName.AlibabaInference]:     process.env.ALIBABA_API_KEY,
+  [InferenceName.HfInference]:          process.env.HF_API_KEY,
+  [InferenceName.OllamaInference]:      undefined, // local, no key needed
+  [InferenceName.GLM4Inference]:        process.env.GLM4_API_KEY,
+};
+```
+
+## Dynamic Provider Selection at Runtime
+
+Because `InferenceName` is just a string enum, you can select a provider at runtime from configuration, environment variables, or user input:
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+interface ProviderConfig {
+  inference: InferenceName;
+  model: string;
+  apiKey?: string;
+}
+
+const configs: Record<string, ProviderConfig> = {
+  fast: {
+    inference: InferenceName.GroqInference,
+    model: "llama-3.3-70b-versatile",
+    apiKey: process.env.GROQ_API_KEY,
+  },
+  smart: {
+    inference: InferenceName.GPT5Inference,
+    model: "gpt-4o",
+    apiKey: process.env.OPENAI_API_KEY,
+  },
+  local: {
+    inference: InferenceName.OllamaInference,
+    model: "llama3.3:70b",
+  },
+};
+
+async function runWithTier(tier: "fast" | "smart" | "local") {
+  const { inference, model, apiKey } = configs[tier];
+
+  return await generateObject(inference, params, model, apiKey);
+}
+
+// Driven by an environment variable, a feature flag, or CLI arg
+const tier = (process.env.INFERENCE_TIER ?? "fast") as "fast" | "smart" | "local";
+const result = await runWithTier(tier);
+```
+
+<Tip>
+  You can also implement automatic fallback: try a primary provider and, on error, retry with a secondary one using the same `params` object.
+</Tip>
+
+## Understanding Strategy Differences
+
+Under the hood, providers fall into two groups. The strategy is picked automatically — you don't configure it — but it does affect observable behavior.
+
+<Tabs>
+  <Tab title="response_format providers">
+    **Providers:** OpenAI, Grok, Perplexity, Cohere, GLM-4
+
+    These providers natively support structured JSON output via the `response_format` parameter. The library makes a single API call and extracts content directly. If the model sets `message.refusal`, an error is thrown immediately.
+
+    ```
+    generateObject → API call with response_format → parse content → return
+    ```
+
+    **Characteristics:**
+    - Single API call (fastest path)
+    - No retry loop
+    - `message.refusal` throws immediately
+  </Tab>
+  <Tab title="tool-calling providers">
+    **Providers:** Claude, DeepSeek, Mistral, Alibaba, Hugging Face, Ollama, Groq
+
+    These providers don't reliably support `response_format`, so the library converts your schema into a `provide_answer` tool definition and forces the model to call it via `tool_choice`. The returned tool arguments are repaired with `jsonrepair`, validated against your schema, and retried up to 3–5 times on failure.
+
+    ```
+    generateObject → define provide_answer tool → force tool_choice
+                   → extract arguments → jsonrepair → validateToolArguments
+                   → retry on failure (up to MAX_ATTEMPTS) → return
+    ```
+
+    **Characteristics:**
+    - Multiple API calls possible (retry loop)
+    - JSON repair applied automatically
+    - Throws `"Model failed to use tool after maximum attempts"` when retries are exhausted
+  </Tab>
+</Tabs>
+
+<Note>
+  The `response_format` vs tool-calling split is an implementation detail. Your `params` object and the returned TypeScript types are identical regardless of which strategy is used.
+</Note>

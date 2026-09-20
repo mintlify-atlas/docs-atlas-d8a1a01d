@@ -1,0 +1,307 @@
+---
+title: "Message Adapter Utilities: toOpenAIMessages and toOllamaMessages"
+sidebarTitle: "Message Adapters"
+description: "Reference for toOpenAIMessages, toOllamaMessages, toDataUrl, and stripDataUrl — utilities for adapting MessageModel arrays to provider wire formats with image support."
+---
+
+Every provider in `json-inference` speaks a slightly different wire format for multi-modal messages. Rather than scattering that translation logic across provider implementations, the library centralises it in four exported utilities. You can call them directly whenever you need to build a request payload outside the built-in provider wrappers, or when you want fine-grained control over how images are encoded before being sent to an API.
+
+---
+
+## `toOpenAIMessages`
+
+Converts an array of [`MessageModel`](#messagemodel) objects to the content-parts format expected by the OpenAI Chat Completions API and every provider that shares the same wire format.
+
+```typescript
+toOpenAIMessages(messages: MessageModel[]): (
+  | { role: MessageRole; content: string }
+  | { role: MessageRole; content: ({ type: string; text: string } | { type: string; image_url: { url: string } })[] }
+)[]
+```
+
+### Parameters
+
+<ParamField path="messages" type="MessageModel[]" required>
+  An array of conversation turns. Each entry must have `role` and `content`;
+  the optional `images` field carries raw base64 strings or existing `data:` URLs.
+
+  ```typescript
+  interface MessageModel {
+    role: "assistant" | "system" | "user";
+    content: string;
+    images?: string[]; // raw base64 or data: URLs
+  }
+  ```
+</ParamField>
+
+### Return value
+
+Returns a new array of the same length. Each element is one of:
+
+<ResponseField name="Text-only message" type="object">
+  When `images` is absent or empty. Shape: `{ role, content }` — identical to
+  the input, passed through unchanged.
+</ResponseField>
+
+<ResponseField name="Multi-modal message" type="object">
+  When `images` is non-empty. Shape:
+
+  ```typescript
+  {
+    role: MessageRole;
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+  }
+  ```
+
+  The `content` array starts with a `{ type: "text", text }` part (omitted when
+  `content` is an empty string), followed by one `{ type: "image_url", ... }`
+  part per image. Each image is passed through [`toDataUrl`](#todataurl) so it
+  is always a valid `data:` URL regardless of whether the caller provided raw
+  base64 or an existing data URL.
+</ResponseField>
+
+### Providers that use this adapter
+
+`toOpenAIMessages` is used internally by all providers built on the OpenAI SDK:
+**GPT-5 (OpenAI)**, **Claude (Anthropic)**, **DeepSeek**, **Mistral**, **Grok (X.AI)**, **Perplexity**, **Cohere**, **Alibaba Cloud**, **Hugging Face**, and **GLM-4 (Z.ai)**.
+
+### Example
+
+<CodeGroup>
+
+```typescript Text-only messages
+import { toOpenAIMessages } from "json-inference";
+
+const messages = [
+  { role: "system" as const, content: "You are a helpful assistant." },
+  { role: "user" as const, content: "What is the capital of France?" },
+];
+
+const wire = toOpenAIMessages(messages);
+// [
+//   { role: "system",  content: "You are a helpful assistant." },
+//   { role: "user",    content: "What is the capital of France?" },
+// ]
+```
+
+```typescript With images
+import { toOpenAIMessages } from "json-inference";
+
+const base64Png = "iVBORw0KGgo..."; // raw base64, no data: prefix
+
+const messages = [
+  {
+    role: "user" as const,
+    content: "What's in this image?",
+    images: [base64Png],
+  },
+];
+
+const wire = toOpenAIMessages(messages);
+// [
+//   {
+//     role: "user",
+//     content: [
+//       { type: "text", text: "What's in this image?" },
+//       { type: "image_url", image_url: { url: "data:image/jpeg;base64,iVBORw0KGgo..." } },
+//     ],
+//   },
+// ]
+```
+
+</CodeGroup>
+
+---
+
+## `toOllamaMessages`
+
+Converts a `MessageModel` array to the format expected by the Ollama HTTP API, where images are sent as a separate top-level `images` array of raw base64 strings rather than embedded inside the `content` field.
+
+```typescript
+toOllamaMessages(messages: MessageModel[]): (
+  | { role: MessageRole; content: string; images?: undefined }
+  | { role: MessageRole; content: string; images: string[] }
+)[]
+```
+
+### Parameters
+
+<ParamField path="messages" type="MessageModel[]" required>
+  An array of conversation turns. Same shape as `toOpenAIMessages` — see
+  [`MessageModel`](#messagemodel) above.
+</ParamField>
+
+### Return value
+
+Returns a new array of the same length. Each element is one of:
+
+<ResponseField name="Text-only message" type="object">
+  When `images` is absent or empty. Shape: `{ role, content }`.
+</ResponseField>
+
+<ResponseField name="Multi-modal message" type="object">
+  When `images` is non-empty. Shape: `{ role, content, images: string[] }`.
+  `content` remains a plain string (unchanged from the input). Each image in
+  `images` has its `data:…base64,` prefix stripped via
+  [`stripDataUrl`](#stripdataurl) so Ollama receives raw base64.
+</ResponseField>
+
+<Note>
+  Ollama's API does not support content-part arrays. The text and image portions
+  of a message must always be sent in separate fields, which is why this adapter
+  differs structurally from `toOpenAIMessages`.
+</Note>
+
+### Example
+
+<CodeGroup>
+
+```typescript Text-only messages
+import { toOllamaMessages } from "json-inference";
+
+const messages = [
+  { role: "user" as const, content: "Describe the solar system." },
+];
+
+const wire = toOllamaMessages(messages);
+// [{ role: "user", content: "Describe the solar system." }]
+```
+
+```typescript With images
+import { toOllamaMessages } from "json-inference";
+
+// Image already has a data: prefix
+const dataUrl = "data:image/png;base64,iVBORw0KGgo...";
+
+const messages = [
+  {
+    role: "user" as const,
+    content: "Describe this chart.",
+    images: [dataUrl],
+  },
+];
+
+const wire = toOllamaMessages(messages);
+// [
+//   {
+//     role: "user",
+//     content: "Describe this chart.",
+//     images: ["iVBORw0KGgo..."], // data: prefix stripped
+//   },
+// ]
+```
+
+</CodeGroup>
+
+---
+
+## `toDataUrl`
+
+Ensures a base64 image string is a valid `data:` URL. If the string already starts with `data:`, it is returned unchanged. Otherwise, the function prepends the standard data URL prefix using the given MIME type.
+
+```typescript
+toDataUrl(image: string, mimeType?: string): string
+```
+
+### Parameters
+
+<ParamField path="image" type="string" required>
+  A raw base64-encoded image string, or an existing `data:` URL. The function
+  detects which case it is at runtime and acts accordingly.
+</ParamField>
+
+<ParamField path="mimeType" type="string">
+  The MIME type to use when constructing the prefix. Defaults to `"image/jpeg"`.
+  Has no effect when `image` already begins with `data:`.
+</ParamField>
+
+### Return value
+
+A `data:` URL string: either the original `image` (if it already had the prefix) or `data:{mimeType};base64,{image}`.
+
+### Example
+
+```typescript
+import { toDataUrl } from "json-inference";
+
+const raw = "iVBORw0KGgo..."; // raw base64
+
+toDataUrl(raw);
+// "data:image/jpeg;base64,iVBORw0KGgo..."
+
+toDataUrl(raw, "image/png");
+// "data:image/png;base64,iVBORw0KGgo..."
+
+// Already a data URL — returned as-is
+toDataUrl("data:image/webp;base64,UklGRg...");
+// "data:image/webp;base64,UklGRg..."
+```
+
+<Tip>
+  Use `toDataUrl` before storing user-supplied images so downstream code can
+  always assume a `data:` URL without branching. `toOpenAIMessages` calls this
+  automatically, but you may need it when constructing messages manually.
+</Tip>
+
+---
+
+## `stripDataUrl`
+
+Extracts the raw base64 payload from a `data:` URL. If the string has no `data:` prefix it is returned unchanged, making the function safe to call on already-stripped strings without double-checking first.
+
+```typescript
+stripDataUrl(image: string): string
+```
+
+### Parameters
+
+<ParamField path="image" type="string" required>
+  A `data:` URL or a raw base64 string. The function splits on the first comma
+  (`","`) and returns everything after it when a `data:` prefix is detected.
+</ParamField>
+
+### Return value
+
+The raw base64 payload as a plain string, with no `data:…base64,` prefix.
+
+### Example
+
+```typescript
+import { stripDataUrl } from "json-inference";
+
+stripDataUrl("data:image/png;base64,iVBORw0KGgo...");
+// "iVBORw0KGgo..."
+
+stripDataUrl("data:image/jpeg;base64,/9j/4AAQ...");
+// "/9j/4AAQ..."
+
+// Already raw base64 — returned as-is
+stripDataUrl("iVBORw0KGgo...");
+// "iVBORw0KGgo..."
+```
+
+<Note>
+  `toOllamaMessages` calls `stripDataUrl` on every image automatically. Call it
+  manually only when you are building Ollama request payloads outside of the
+  provider abstraction.
+</Note>
+
+---
+
+## `MessageModel`
+
+For reference, the full type consumed by both adapter functions:
+
+```typescript
+type MessageRole = "assistant" | "system" | "user";
+
+interface MessageModel {
+  role: MessageRole;
+  content: string;
+  /** Attached images: raw base64 strings or data: URLs. */
+  images?: string[];
+}
+```

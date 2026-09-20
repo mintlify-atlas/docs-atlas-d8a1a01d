@@ -1,0 +1,116 @@
+---
+title: "InferenceName Enum — LLM Provider Identifiers"
+sidebarTitle: "InferenceName"
+description: "Complete reference for the InferenceName enum. Lists all 12 provider values with their string literals, completion strategies, and base API URLs."
+---
+
+`InferenceName` is a string enum that identifies which LLM provider `generateObject()` and `generateText()` should route a request to. Every member maps to a specific HTTP base URL and a completion strategy — either native `response_format` JSON output or a `provide_answer` tool-calling approach. Passing the wrong enum value for your API key will result in an authentication error from the target provider.
+
+## Import
+
+```typescript
+import { InferenceName } from 'json-inference';
+```
+
+## All 12 Values
+
+| Enum member | String literal | Strategy | Base URL |
+|---|---|---|---|
+| `InferenceName.OllamaInference` | `"ollama_inference"` | tool-calling | `localhost:11434` |
+| `InferenceName.GrokInference` | `"grok_inference"` | response_format | `api.x.ai/v1/` |
+| `InferenceName.HfInference` | `"hf_inference"` | tool-calling | `router.huggingface.co/v1/` |
+| `InferenceName.ClaudeInference` | `"claude_inference"` | tool-calling | `api.anthropic.com/v1/` |
+| `InferenceName.GPT5Inference` | `"gpt5_inference"` | response_format | `api.openai.com` |
+| `InferenceName.GLM4Inference` | `"glm4_inference"` | response_format | `api.z.ai/api/paas/v4/` |
+| `InferenceName.DeepseekInference` | `"deepseek_inference"` | tool-calling | `api.deepseek.com` |
+| `InferenceName.MistralInference` | `"mistral_inference"` | tool-calling | `api.mistral.ai/v1/` |
+| `InferenceName.PerplexityInference` | `"perplexity_inference"` | response_format | `api.perplexity.ai` |
+| `InferenceName.CohereInference` | `"cohere_inference"` | response_format | `api.cohere.ai/compatibility/v1` |
+| `InferenceName.AlibabaInference` | `"alibaba_inference"` | tool-calling | `dashscope-intl.aliyuncs.com` |
+| `InferenceName.GroqInference` | `"groq_inference"` | tool-calling | `api.groq.com` |
+
+## Completion Strategies
+
+The library uses two distinct completion strategies depending on the provider:
+
+**`response_format` providers** (OpenAI, Grok, Perplexity, Cohere, GLM-4) send your `FormatModel` schema as a native `response_format: { type: "json_schema" }` parameter. The model returns JSON directly in its content field. A single attempt is made.
+
+**`tool-calling` providers** (Claude, DeepSeek, Mistral, HuggingFace, Ollama, Alibaba, Groq) wrap your schema inside a `provide_answer` tool definition and force the model to call it via `tool_choice`. The tool call arguments are extracted, repaired with `jsonrepair`, validated against your schema, and retried up to 5 times on failure before throwing.
+
+<Note>
+  `InferenceName.OllamaInference` is the only provider that does not require an
+  `apiKey` argument. Ollama runs locally and listens on `localhost:11434` by
+  default. All other providers require a valid API key.
+</Note>
+
+## Source Definition
+
+```typescript
+export enum InferenceName {
+    /** Ollama provider for local/cloud LLM inference */
+    OllamaInference = "ollama_inference",
+    /** Grok provider by X.AI (api.x.ai) */
+    GrokInference = "grok_inference",
+    /** Hugging Face Inference API provider */
+    HfInference = "hf_inference",
+    /** Claude provider by Anthropic (api.anthropic.com) */
+    ClaudeInference = "claude_inference",
+    /** OpenAI GPT provider (api.openai.com) */
+    GPT5Inference = "gpt5_inference",
+    /** Z.ai GPT Provider (api.z.ai/api/paas/v4) */
+    GLM4Inference = "glm4_inference",
+    /** DeepSeek provider (api.deepseek.com) */
+    DeepseekInference = "deepseek_inference",
+    /** Mistral AI provider (api.mistral.ai) */
+    MistralInference = "mistral_inference",
+    /** Perplexity AI provider (api.perplexity.ai) */
+    PerplexityInference = "perplexity_inference",
+    /** Cohere provider (api.cohere.ai) */
+    CohereInference = "cohere_inference",
+    /** Alibaba Cloud provider (dashscope-intl.aliyuncs.com) */
+    AlibabaInference = "alibaba_inference",
+    /** Groq provider (api.groq.com) */
+    GroqInference = "groq_inference",
+}
+```
+
+## Usage Example
+
+<CodeGroup>
+```typescript Basic usage
+import { generateObject, InferenceName } from 'json-inference';
+
+const schema = {
+  type: "object",
+  required: ["answer"],
+  properties: {
+    answer: { type: "string", description: "The answer" },
+  },
+} as const;
+
+const messages = [{ role: "user" as const, content: "What year was TypeScript released?" }];
+
+// Pick any provider by swapping the first argument
+const fromOpenAI    = await generateObject(InferenceName.GPT5Inference,       { format: schema, messages }, "gpt-4o",                     process.env.OPENAI_API_KEY);
+const fromClaude    = await generateObject(InferenceName.ClaudeInference,     { format: schema, messages }, "claude-3-5-sonnet-20241022",  process.env.CLAUDE_API_KEY);
+const fromDeepseek  = await generateObject(InferenceName.DeepseekInference,   { format: schema, messages }, "deepseek-chat",               process.env.DEEPSEEK_API_KEY);
+const fromMistral   = await generateObject(InferenceName.MistralInference,    { format: schema, messages }, "mistral-large-latest",        process.env.MISTRAL_API_KEY);
+const fromGroq      = await generateObject(InferenceName.GroqInference,       { format: schema, messages }, "llama-3.3-70b-versatile",     process.env.GROQ_API_KEY);
+const fromOllama    = await generateObject(InferenceName.OllamaInference,     { format: schema, messages }, "llama3.3:70b");
+```
+
+```typescript Checking the string literal at runtime
+import { InferenceName } from 'json-inference';
+
+console.log(InferenceName.GPT5Inference);       // "gpt5_inference"
+console.log(InferenceName.ClaudeInference);     // "claude_inference"
+console.log(InferenceName.OllamaInference);     // "ollama_inference"
+console.log(InferenceName.GroqInference);       // "groq_inference"
+```
+</CodeGroup>
+
+<Tip>
+  Because `InferenceName` is a standard TypeScript `enum`, its members are
+  available as both values and types. You can accept `InferenceName` as a
+  function parameter type to build provider-agnostic utilities.
+</Tip>

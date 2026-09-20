@@ -1,0 +1,329 @@
+---
+title: "Retry Logic and JSON Repair for Resilient Output"
+sidebarTitle: "Retry & Repair"
+description: "Discover how json-inference handles malformed LLM responses using jsonrepair, validateToolArguments, and up to 5 automatic retries for tool-calling providers."
+---
+
+LLMs that don't natively support structured output regularly return malformed JSON, skip tool calls entirely, or refuse a request. `json-inference` handles all of these failure modes automatically through a combination of JSON repair, schema validation, and a bounded retry loop — so your application code never has to deal with raw provider failures.
+
+## Which Providers Retry?
+
+The retry mechanism only applies to **tool-calling** providers. `response_format` providers (OpenAI, Grok, Perplexity, Cohere, GLM-4) rely on native structured output support and make a single API call — if the provider returns a refusal, an error is thrown immediately.
+
+<CardGroup cols={2}>
+  <Card title="Retry loop (up to 5 attempts)" icon="rotate-right">
+    Tool-calling providers:
+    - Claude (`ClaudeInference`)
+    - DeepSeek (`DeepseekInference`)
+    - Mistral (`MistralInference`)
+    - Hugging Face (`HfInference`)
+    - Ollama (`OllamaInference`)
+    - Alibaba (`AlibabaInference`)
+    - Groq (`GroqInference`)
+  </Card>
+  <Card title="Single attempt, no retry" icon="circle-check">
+    `response_format` providers:
+    - OpenAI (`GPT5Inference`)
+    - Grok (`GrokInference`)
+    - Perplexity (`PerplexityInference`)
+    - Cohere (`CohereInference`)
+    - GLM-4 (`GLM4Inference`)
+  </Card>
+</CardGroup>
+
+## The Retry Loop Step by Step
+
+The following trace follows the Claude provider implementation (`ClaudeProvider.client.ts`), which is representative of all tool-calling providers. `MAX_ATTEMPTS` is set to `5`.
+
+<Steps>
+  <Step title="Build the provide_answer tool and system prompt">
+    Before the loop starts, the provider converts your `FormatModel` schema
+    into a `provide_answer` tool definition and injects a system message that
+    instructs the model to always call the tool. A `singleshot` nudge message
+    is also prepared (used at most once during the loop — see Step 4).
+
+    ```typescript
+    const toolDefinition = {
+      type: "function",
+      function: {
+        name: "provide_answer",
+        description: "Предоставить ответ в требуемом формате",
+        parameters: schema,
+      },
+    };
+
+    const systemMessage = {
+      role: "system",
+      content:
+        "ОБЯЗАТЕЛЬНО используй инструмент provide_answer для предоставления ответа. " +
+        "НЕ отвечай обычным текстом. ВСЕГДА вызывай инструмент provide_answer с правильными параметрами.",
+    };
+
+    const addToolRequestMessage = singleshot(() => {
+      messages.push({
+        role: "user",
+        content:
+          "Пожалуйста, используй инструмент provide_answer для предоставления ответа. " +
+          "Не отвечай обычным текстом.",
+      });
+    });
+    ```
+  </Step>
+
+  <Step title="Send the request with forced tool_choice">
+    Each attempt sends the full conversation (including any nudge messages
+    added in previous attempts) with `tool_choice` locked to `provide_answer`,
+    ensuring the model cannot respond with plain text.
+
+    ```typescript
+    const requestOptions = {
+      model,
+      messages: messages as any,
+      tools: [toolDefinition],
+      tool_choice: {
+        type: "function",
+        function: { name: "provide_answer" },
+      },
+    };
+
+    const { choices: [{ message }] } =
+      await claude.chat.completions.create(requestOptions);
+    ```
+  </Step>
+
+  <Step title="Check for a model refusal">
+    If the model sets the `refusal` field on the message, the attempt is
+    logged and the counter increments. No nudge message is added for refusals.
+
+    ```typescript
+    if (refusal) {
+      console.error(`Attempt ${attempt + 1}: Model send refusal`);
+      attempt++;
+      continue;
+    }
+    ```
+  </Step>
+
+  <Step title="Check that tool_calls were returned">
+    If the model responded without invoking any tool (i.e., `tool_calls` is
+    empty or absent), the `singleshot` nudge message is appended to the
+    conversation and the attempt retries. Because `addToolRequestMessage` is
+    wrapped in `singleshot`, this user nudge is added **at most once** across
+    all retry attempts — preventing duplicate messages from inflating the
+    context.
+
+    ```typescript
+    if (!tool_calls?.length) {
+      console.error(
+        `Attempt ${attempt + 1}: Model did not use tool, adding user message`
+      );
+      addToolRequestMessage();
+      attempt++;
+      continue;
+    }
+    ```
+  </Step>
+
+  <Step title="Repair and parse the tool arguments with jsonrepair">
+    The `arguments` string from `tool_calls[0].function.arguments` is passed
+    through `jsonrepair` before `JSON.parse`. This handles common LLM mistakes
+    such as trailing commas, unquoted keys, single-quoted strings, and
+    incomplete JSON fragments.
+
+    ```typescript
+    let parsedArguments: any;
+    try {
+      const json = jsonrepair(toolCall.function.arguments);
+      parsedArguments = JSON.parse(json);
+    } catch (error) {
+      console.error(
+        `Attempt ${attempt + 1}: Failed to parse tool arguments:`,
+        error
+      );
+      addToolRequestMessage();
+      attempt++;
+      continue;
+    }
+    ```
+  </Step>
+
+  <Step title="Validate against the schema with validateToolArguments">
+    The parsed object is passed to `validateToolArguments(parsedArguments, schema)`.
+    This function checks that all `required` fields are present and that every
+    present field's value passes recursive type validation via
+    `validateValue(value, schema, path)`. If validation fails, the error is
+    logged, the nudge message is requested (if not already sent), and the loop
+    retries.
+
+    ```typescript
+    const validation = validateToolArguments(parsedArguments, schema);
+
+    if (!validation.success) {
+      console.error(`Attempt ${attempt + 1}: ${validation.error}`);
+      addToolRequestMessage();
+      attempt++;
+      continue;
+    }
+    ```
+  </Step>
+
+  <Step title="Return the validated result">
+    On success, the validated data object is serialized back to JSON and
+    returned as a `MessageModel`. `generateObject()` then calls `JSON.parse`
+    on that content and returns it as the inferred type `InferFormat<F>`.
+
+    ```typescript
+    const result = {
+      role: "assistant" as const,
+      content: JSON.stringify(validation.data),
+    };
+    return result;
+    ```
+
+    If all 5 attempts are exhausted without a successful validation, the
+    provider throws:
+    ```typescript
+    throw new Error("Model failed to use tool after maximum attempts");
+    ```
+  </Step>
+</Steps>
+
+## jsonrepair: Auto-Fixing Malformed JSON
+
+The `jsonrepair` library is applied to the raw `arguments` string from every tool call before `JSON.parse` is attempted. It handles a wide range of malformations that LLMs commonly produce:
+
+- Trailing commas in objects or arrays
+- Unquoted or single-quoted property keys
+- Single-quoted string values
+- Missing closing braces or brackets
+- Extra text or markdown code fences surrounding the JSON
+
+<Note>
+  `jsonrepair` is also used in `response_format` providers (e.g.,
+  `GPT5Provider`) as a safety net on the raw message content, even though
+  those providers are more reliably structured.
+</Note>
+
+## validateToolArguments and validateValue
+
+`validateToolArguments` is the schema validation layer. It takes the parsed arguments object and your `FormatModel` schema and returns a `ValidationResult`:
+
+```typescript
+export interface ValidationResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+export const validateToolArguments = <T = any>(
+  parsedArguments: unknown,
+  schema: FormatModel
+): ValidationResult<T> => { ... }
+```
+
+It performs two checks:
+
+1. **Required fields** — all keys listed in `schema.required` must be present in the parsed object.
+2. **Per-field type validation** — for every key present in the object, it calls `validateValue(value, propertySchema, key)` recursively.
+
+`validateValue` walks the schema tree, matching the `type` discriminant and producing a human-readable dotted-path error string on mismatch:
+
+```typescript
+export const validateValue = (
+  value: unknown,
+  schema: any,
+  path: string
+): string | null => {
+  switch (schema.type) {
+    case "string": {
+      if (typeof value !== "string")
+        return `${path}: expected string, got ${typeOf(value)}`;
+      if (Array.isArray(schema.enum) && !schema.enum.includes(value))
+        return `${path}: expected one of [${schema.enum.join(", ")}], got "${value}"`;
+      return null;
+    }
+    case "number": {
+      if (typeof value !== "number" || Number.isNaN(value))
+        return `${path}: expected number, got ${typeOf(value)}`;
+      return null;
+    }
+    case "integer": {
+      if (typeof value !== "number" || !Number.isInteger(value))
+        return `${path}: expected integer, got ${typeOf(value)}`;
+      return null;
+    }
+    case "boolean": {
+      if (typeof value !== "boolean")
+        return `${path}: expected boolean, got ${typeOf(value)}`;
+      return null;
+    }
+    case "array": {
+      if (!Array.isArray(value))
+        return `${path}: expected array, got ${typeOf(value)}`;
+      // minItems / maxItems are also checked
+      if (schema.items) {
+        for (let i = 0; i !== value.length; i++) {
+          const error = validateValue(value[i], schema.items, `${path}[${i}]`);
+          if (error) return error;
+        }
+      }
+      return null;
+    }
+    case "object": {
+      // checks required sub-fields and recurses into properties
+      ...
+      return null;
+    }
+  }
+};
+```
+
+Path strings accumulate dot notation for nested fields and bracket notation for array indices, so an error deep in the tree looks like `author.address.zip[0]: expected string, got number`.
+
+## What Triggers a Retry
+
+The following table summarises every condition that increments the attempt counter:
+
+| Trigger | Source | Nudge message added? |
+|---|---|---|
+| `message.refusal` is truthy | Provider (model refused) | No |
+| `tool_calls` is empty / absent | Model ignored `tool_choice` | Yes (singleshot) |
+| `jsonrepair` + `JSON.parse` throws | Unrecoverable JSON | Yes (singleshot) |
+| Missing required fields | `validateToolArguments` | Yes (singleshot) |
+| Wrong type for a present field | `validateValue` | Yes (singleshot) |
+| Enum constraint violated | `validateValue` | Yes (singleshot) |
+
+<Warning>
+  The `singleshot` helper ensures the nudge user message is appended **only
+  once**, regardless of how many retry failures occur. Adding it multiple
+  times would bloat the context and confuse the model about what it is being
+  asked to do.
+</Warning>
+
+## response_format Providers: No Retry
+
+For `response_format` providers such as OpenAI, the implementation is deliberately simpler. There is no retry loop — a single `chat.completions.create` call is made with `response_format: { type: "json_schema", json_schema: { schema: format } }`. If the model returns a refusal, an error is thrown. `jsonrepair` is still applied to the content as a precaution, but there is no `validateToolArguments` call and no retry.
+
+```typescript
+// GPT5Provider — response_format path (no retry loop)
+const completion = await openai.chat.completions.create({
+  messages: toOpenAIMessages(messages) as any,
+  model,
+  response_format: response_format as any,
+});
+
+const choice = completion.choices[0];
+
+if (choice.message.refusal) {
+  throw new Error(choice.message.refusal);
+}
+
+const json = jsonrepair(choice.message.content || "");
+
+return {
+  role: "assistant" as const,
+  content: json,
+};
+```
+
+The trade-off is intentional: `response_format` providers already enforce structure at the API level, so the retry overhead is unnecessary. Tool-calling providers need the extra resilience because the model can always choose to ignore the tool call constraint or produce broken JSON.

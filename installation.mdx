@@ -1,0 +1,103 @@
+---
+title: "Install json-inference and Peer Dependencies"
+sidebarTitle: "Installation"
+description: "Install json-inference alongside its three peer dependencies — openai, ollama, and groq-sdk — to unlock all 12 supported LLM providers with a single command."
+---
+
+`json-inference` ships as a small core package that delegates provider communication to three well-maintained SDK peer dependencies. Installing all of them up front means every provider is immediately available — no conditional imports, no optional requires.
+
+## Install Command
+
+<CodeGroup>
+```bash npm
+npm install json-inference openai ollama groq-sdk
+```
+
+```bash yarn
+yarn add json-inference openai ollama groq-sdk
+```
+
+```bash pnpm
+pnpm add json-inference openai ollama groq-sdk
+```
+</CodeGroup>
+
+<Note>
+  All three peer dependencies are required regardless of which provider(s) you plan to use. Each covers a distinct set of providers and the library's `Runner` class expects them all to be resolvable at runtime.
+</Note>
+
+## Peer Dependency Mapping
+
+Each SDK peer dependency covers a specific subset of the 12 supported providers:
+
+| Peer package | Version | Providers covered |
+|---|---|---|
+| `openai` | `^4.97.0` | OpenAI, Claude, DeepSeek, Mistral, Perplexity, Cohere, GLM-4, Alibaba, Hugging Face, Grok |
+| `ollama` | `^0.6.0` | Ollama |
+| `groq-sdk` | `^0.37.0` | Groq |
+
+<Tip>
+  The `openai` SDK is reused across many providers because they expose an OpenAI-compatible API surface. Only Ollama and Groq require their own dedicated SDKs.
+</Tip>
+
+## Module Formats
+
+`json-inference` ships a dual build and works in both ESM and CommonJS environments:
+
+| Format | Entry point |
+|---|---|
+| ESM (`import`) | `build/index.mjs` |
+| CommonJS (`require`) | `build/index.cjs` |
+| TypeScript types | `types.d.ts` |
+
+The `exports` field in `package.json` handles resolution automatically — your bundler or Node.js runtime will pick the correct format without any configuration.
+
+```json
+// package.json exports (for reference)
+{
+  "exports": {
+    "require": "./build/index.cjs",
+    "import":  "./build/index.mjs",
+    "types":   "./types.d.ts",
+    "default": "./build/index.cjs"
+  }
+}
+```
+
+## TypeScript Support
+
+TypeScript **5.0 or later** is recommended to get accurate return-type inference from the `InferFormat<T>` generic. The `types` field points to `types.d.ts` at the package root, so no `@types/` package is needed.
+
+```typescript
+// Full type inference — no explicit generics required
+import { generateObject, InferenceName } from "json-inference";
+
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  {
+    format: {
+      type: "object",
+      required: ["score"],
+      properties: {
+        score: { type: "number", description: "Quality score 0-100" },
+      },
+    },
+    messages: [{ role: "user", content: "Rate this: great product!" }],
+  },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+
+// result.score is inferred as `number` — no `as` cast needed
+console.log(result.score);
+```
+
+The library also works in **plain JavaScript** projects — the `InferFormat<T>` type inference falls back gracefully and IDE autocomplete still works via JSDoc inference in editors that support it.
+
+## No Configuration Required
+
+There are no provider registry files, environment variable loaders, or SDK client instances to set up. After installation, import `generateObject` and `InferenceName` and you're ready to call any provider. API keys are passed directly as the last argument to `generateObject()`.
+
+<Warning>
+  Do not hardcode API keys in source files. Use environment variables (e.g. `process.env.OPENAI_API_KEY`) or a secrets manager. Ollama is the only provider that does not require an API key since it runs locally.
+</Warning>

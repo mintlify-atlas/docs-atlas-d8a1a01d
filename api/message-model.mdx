@@ -1,0 +1,196 @@
+---
+title: "MessageModel and MessageRole — Conversation Input Types"
+sidebarTitle: "MessageModel"
+description: "Reference for the MessageModel interface and MessageRole type used to pass conversation history and optional images to generateObject() and generateText()."
+---
+
+`MessageModel` is the shared input format for both `generateObject()` and `generateText()`. Every message in the `params.messages` array must conform to this interface. The library adapts the array to each provider's wire format internally — OpenAI-compatible providers receive messages transformed by `toOpenAIMessages()`, while Ollama receives them through `toOllamaMessages()`. You always work with the same clean `MessageModel[]` regardless of provider.
+
+## `MessageRole`
+
+```typescript
+type MessageRole = "assistant" | "system" | "user";
+```
+
+| Value | When to use |
+|---|---|
+| `"system"` | Sets the model's persona, tone, or constraints. Must appear as the first message if used. |
+| `"user"` | Represents the human turn — your prompt, question, or data to process. |
+| `"assistant"` | Represents a prior model response. Used in multi-turn conversations to provide history. |
+
+## `MessageModel`
+
+```typescript
+interface MessageModel {
+  role: MessageRole;
+  content: string;
+  /** Attached images: raw base64 strings or data: URLs. Providers adapt them to their own wire format. */
+  images?: string[];
+}
+```
+
+<ResponseField name="role" type="MessageRole" required>
+  The speaker role for this message. Must be one of `"assistant"`, `"system"`, or `"user"`.
+</ResponseField>
+
+<ResponseField name="content" type="string" required>
+  The text content of the message. Can be any length. For `system` messages this is the instruction; for `user` messages this is the prompt; for `assistant` messages this is the prior response to replay.
+</ResponseField>
+
+<ResponseField name="images" type="string[]">
+  Optional array of attached images. Each element can be either a **raw base64 string** (no prefix) or a **data URL** (`data:image/png;base64,...`). The library normalizes both formats automatically:
+  - For OpenAI-compatible providers: transformed by `toOpenAIMessages()` into `image_url` content parts.
+  - For Ollama: transformed by `toOllamaMessages()` into the `images` field with the `data:` prefix stripped.
+  
+  Only attach images to `user` messages. Not all models support vision input — check your provider's model documentation.
+</ResponseField>
+
+## Building a Messages Array
+
+### Single user message
+
+The simplest case: one `user` message with your prompt.
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  {
+    format: {
+      type: "object",
+      required: ["capital"],
+      properties: {
+        capital: { type: "string", description: "The capital city" },
+      },
+    },
+    messages: [
+      { role: "user", content: "What is the capital of Japan?" },
+    ],
+  },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+```
+
+### System + user
+
+Add a `system` message before the `user` message to control persona or output style.
+
+```typescript
+import { generateText, InferenceName } from 'json-inference';
+
+const reply = await generateText(
+  InferenceName.MistralInference,
+  {
+    messages: [
+      {
+        role: "system",
+        content: "You are an expert Python developer. Answer questions concisely with code examples.",
+      },
+      {
+        role: "user",
+        content: "How do I reverse a list in Python?",
+      },
+    ],
+  },
+  "mistral-large-latest",
+  process.env.MISTRAL_API_KEY,
+);
+```
+
+### Multi-turn conversation
+
+Replay the full conversation history by appending prior `assistant` responses as `assistant` messages.
+
+```typescript
+import { generateText, InferenceName } from 'json-inference';
+
+const history: MessageModel[] = [
+  { role: "system",    content: "You are a helpful geography tutor." },
+  { role: "user",      content: "Name the five largest countries by area." },
+  { role: "assistant", content: "Russia, Canada, United States, China, and Brazil." },
+  { role: "user",      content: "Which of those is in South America?" },
+];
+
+const reply = await generateText(
+  InferenceName.GroqInference,
+  { messages: history },
+  "llama-3.3-70b-versatile",
+  process.env.GROQ_API_KEY,
+);
+// → "Brazil is the country in South America from that list."
+```
+
+### Multimodal — attaching images
+
+Pass images as base64 strings or data URLs in the `images` array of a `user` message. The library handles format adaptation per provider.
+
+<CodeGroup>
+```typescript Base64 from file (Ollama)
+import { generateText, InferenceName } from 'json-inference';
+import fs from 'node:fs';
+
+const imageBase64 = fs.readFileSync('./diagram.png').toString('base64');
+
+const reply = await generateText(
+  InferenceName.OllamaInference,
+  {
+    messages: [
+      {
+        role: "user",
+        content: "Describe the architecture shown in this diagram.",
+        images: [imageBase64],
+      },
+    ],
+  },
+  "llava:13b",
+);
+```
+
+```typescript Data URL (OpenAI)
+import { generateObject, InferenceName } from 'json-inference';
+import fs from 'node:fs';
+
+const imageBuffer = fs.readFileSync('./receipt.jpg');
+const dataUrl = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  {
+    format: {
+      type: "object",
+      required: ["total", "currency"],
+      properties: {
+        total:    { type: "number", description: "Total amount on the receipt" },
+        currency: { type: "string", description: "Currency code, e.g. USD" },
+      },
+    },
+    messages: [
+      {
+        role: "user",
+        content: "Extract the total and currency from this receipt.",
+        images: [dataUrl],
+      },
+    ],
+  },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+
+console.log(result.total, result.currency);
+```
+</CodeGroup>
+
+<Warning>
+  The `images` field is only meaningful for multimodal models. Passing images
+  to a text-only model may produce an error from the provider or have the images
+  silently ignored, depending on the provider's API behavior.
+</Warning>
+
+<Tip>
+  `json-inference` exports two helper utilities for working with image strings:
+  `toDataUrl(image, mimeType?)` converts a raw base64 string to a data URL, and
+  `stripDataUrl(image)` removes the `data:...;base64,` prefix. Both are
+  available as named exports from `'json-inference'`.
+</Tip>

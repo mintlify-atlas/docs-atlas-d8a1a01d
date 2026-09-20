@@ -1,0 +1,141 @@
+---
+title: "generateText() — Plain Text Completions from Any LLM"
+sidebarTitle: "generateText()"
+description: "Full reference for generateText(inferenceName, params, model, apiKey). Returns a plain string from any of the 12 supported providers using ITextParams."
+---
+
+`generateText()` is the plain-text companion to `generateObject()`. It sends a conversation history to any of the 12 supported providers and returns the model's response as a raw `string` — no schema, no JSON parsing, no type inference. Use it whenever you need free-form prose, summaries, translations, or any output that doesn't need to conform to a structured shape.
+
+## Signature
+
+```typescript
+generateText(
+  inferenceName: InferenceName,
+  params: ITextParams,
+  model: string,
+  apiKey?: string,
+): Promise<string>
+```
+
+## Parameters
+
+<ParamField path="inferenceName" type="InferenceName" required>
+  The provider to route the request to. Use a member of the `InferenceName` enum, e.g. `InferenceName.MistralInference` or `InferenceName.GroqInference`. All 12 providers that work with `generateObject()` are equally available here. See the [InferenceName reference](/api/inference-name) for the full list.
+</ParamField>
+
+<ParamField path="params" type="ITextParams" required>
+  An object containing the conversation history.
+
+  <Expandable title="ITextParams fields">
+    <ParamField path="params.messages" type="MessageModel[]" required>
+      The conversation history to send to the model. Each element has a `role` (`"system"`, `"user"`, or `"assistant"`) and a `content` string. An optional `images` array lets you attach base64 or data-URL images for multimodal providers. See the [MessageModel reference](/api/message-model) for the full interface.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  The provider-specific model identifier, e.g. `"mistral-large-latest"`, `"llama-3.3-70b-versatile"`, or `"gpt-4o"`. Passed directly to the provider API — consult provider documentation for valid model names.
+</ParamField>
+
+<ParamField path="apiKey" type="string">
+  Your API key for the chosen provider. Required for all cloud providers. Omit or pass `undefined` when using `InferenceName.OllamaInference` against a local server.
+</ParamField>
+
+## Return Value
+
+```typescript
+Promise<string>
+```
+
+Resolves to the raw text content of the model's first completion choice. The string is returned exactly as the provider sends it — no trimming, no parsing, no validation.
+
+## Code Example
+
+<CodeGroup>
+```typescript Simple prompt (Mistral)
+import { generateText, InferenceName } from 'json-inference';
+
+const reply = await generateText(
+  InferenceName.MistralInference,
+  {
+    messages: [
+      {
+        role: "system",
+        content: "You are a concise technical writer.",
+      },
+      {
+        role: "user",
+        content: "Explain what a closure is in JavaScript in two sentences.",
+      },
+    ],
+  },
+  "mistral-large-latest",
+  process.env.MISTRAL_API_KEY,
+);
+
+console.log(reply);
+// → "A closure is a function that retains access to variables
+//    from its enclosing scope even after that scope has exited. ..."
+```
+
+```typescript Multi-turn conversation (Groq)
+import { generateText, InferenceName } from 'json-inference';
+
+const reply = await generateText(
+  InferenceName.GroqInference,
+  {
+    messages: [
+      { role: "system",    content: "You are a helpful assistant." },
+      { role: "user",      content: "What is the speed of light?" },
+      { role: "assistant", content: "The speed of light in a vacuum is approximately 299,792,458 metres per second." },
+      { role: "user",      content: "What is that in miles per second?" },
+    ],
+  },
+  "llama-3.3-70b-versatile",
+  process.env.GROQ_API_KEY,
+);
+
+console.log(reply);
+// → "That's approximately 186,282 miles per second."
+```
+
+```typescript Multimodal prompt (Ollama, no key)
+import { generateText, InferenceName } from 'json-inference';
+import fs from 'node:fs';
+
+const imageBase64 = fs.readFileSync('./chart.png').toString('base64');
+
+const reply = await generateText(
+  InferenceName.OllamaInference,
+  {
+    messages: [
+      {
+        role: "user",
+        content: "Describe what you see in this chart.",
+        images: [imageBase64],
+      },
+    ],
+  },
+  "llava:13b",
+);
+
+console.log(reply);
+```
+</CodeGroup>
+
+<Note>
+  `generateText()` does not apply any retry or JSON-repair logic — it returns
+  the first completion the provider sends. If you need validated, structured
+  output use [`generateObject()`](/api/generate-object) instead.
+</Note>
+
+## Differences from `generateObject()`
+
+| | `generateText()` | `generateObject()` |
+|---|---|---|
+| Return type | `Promise<string>` | `Promise<InferFormat<F>>` |
+| Requires `format` schema | No | Yes |
+| Retry on failure | No | Yes (up to 5×) |
+| JSON repair | No | Yes |
+| Schema validation | No | Yes |
+| Type inference | No | Yes |

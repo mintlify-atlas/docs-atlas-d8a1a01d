@@ -1,0 +1,222 @@
+---
+title: "FormatModel, FormatProperty, and FormatItems Types"
+sidebarTitle: "FormatModel"
+description: "Reference for the FormatModel interface and related FormatProperty and FormatItems discriminated union types used to define JSON output schemas."
+---
+
+`FormatModel` is the schema object you pass as `params.format` to `generateObject()`. It tells the library — and the underlying LLM — exactly what shape the response must have. The schema is modelled after a strict subset of JSON Schema: a top-level object with typed, described properties. The `FormatProperty` discriminated union covers six primitive and composite types; `FormatItems` is the same union used inside array definitions, with `description` made optional.
+
+## `FormatModel`
+
+The root schema type. Always represents a top-level JSON object.
+
+```typescript
+interface FormatModel {
+    type: string;
+    required: string[];
+    properties: {
+        [key: string]: FormatProperty;
+    };
+}
+```
+
+<ResponseField name="type" type="string" required>
+  Should be `"object"` for all practical use. The library treats the top-level schema as an object regardless.
+</ResponseField>
+
+<ResponseField name="required" type="string[]" required>
+  Names of properties that the model **must** populate. The library validates these keys after parsing the model's response and retries if any are missing (on tool-calling providers).
+</ResponseField>
+
+<ResponseField name="properties" type="{ [key: string]: FormatProperty }" required>
+  A map of property names to their `FormatProperty` definitions. Every key here becomes a property on the returned object.
+</ResponseField>
+
+## `FormatProperty`
+
+A discriminated union type. Select the variant by setting `type` to one of the six supported string literals. Unlike `FormatItems`, `description` is **required** on every `FormatProperty` variant — it is sent to the model as the field's instruction.
+
+```typescript
+type FormatProperty =
+    | { type: "string";  description: string; enum?: string[] }
+    | { type: "number";  description: string }
+    | { type: "integer"; description: string }
+    | { type: "boolean"; description: string }
+    | { type: "array";   description: string; items?: FormatItems; minItems?: number; maxItems?: number }
+    | { type: "object";  description: string; required?: string[]; properties?: { [key: string]: FormatProperty } };
+```
+
+### Variant reference
+
+<ResponseField name='{ type: "string" }' type="FormatProperty">
+  Produces a `string` in the inferred TypeScript type.
+
+  <Expandable title="Fields">
+    <ResponseField name="description" type="string" required>
+      Instruction for the model about what this string should contain.
+    </ResponseField>
+    <ResponseField name="enum" type="string[]">
+      Optional list of allowed values. When present, the model is constrained to return one of these strings. Useful for classification tasks (e.g. `["positive", "negative", "neutral"]`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name='{ type: "number" }' type="FormatProperty">
+  Produces a `number` (floating-point) in the inferred TypeScript type.
+
+  <Expandable title="Fields">
+    <ResponseField name="description" type="string" required>
+      Instruction for the model, e.g. `"Confidence score between 0 and 1"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name='{ type: "integer" }' type="FormatProperty">
+  Produces a `number` (integer) in the inferred TypeScript type. Maps to `number` in TypeScript because JavaScript has no separate integer type.
+
+  <Expandable title="Fields">
+    <ResponseField name="description" type="string" required>
+      Instruction for the model, e.g. `"Age in whole years"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name='{ type: "boolean" }' type="FormatProperty">
+  Produces a `boolean` in the inferred TypeScript type.
+
+  <Expandable title="Fields">
+    <ResponseField name="description" type="string" required>
+      Instruction for the model, e.g. `"Whether the statement is factually correct"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name='{ type: "array" }' type="FormatProperty">
+  Produces `InferProperty<I>[]` when `items` is provided, or `any[]` when it is absent.
+
+  <Expandable title="Fields">
+    <ResponseField name="description" type="string" required>
+      Instruction for the model about what each element should contain.
+    </ResponseField>
+    <ResponseField name="items" type="FormatItems">
+      Optional schema for the array element type. Omit to get `any[]`.
+    </ResponseField>
+    <ResponseField name="minItems" type="number">
+      Optional lower bound on array length, passed to the model as a schema constraint.
+    </ResponseField>
+    <ResponseField name="maxItems" type="number">
+      Optional upper bound on array length.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name='{ type: "object" }' type="FormatProperty">
+  Produces a mapped object type `{ [K in keyof P]: InferProperty<P[K]> }` when `properties` is provided, or `Record<string, any>` when it is absent.
+
+  <Expandable title="Fields">
+    <ResponseField name="description" type="string" required>
+      Instruction for the model about what this object represents.
+    </ResponseField>
+    <ResponseField name="required" type="string[]">
+      Optional list of required sub-property names within this nested object.
+    </ResponseField>
+    <ResponseField name="properties" type="{ [key: string]: FormatProperty }">
+      Optional map of sub-property names to their own `FormatProperty` definitions. Supports arbitrary nesting depth.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## `FormatItems`
+
+Used as the `items` field inside an array property. Structurally identical to `FormatProperty` but with `description` made optional on every variant, because items in an array often don't need a separate instruction beyond the array's own description.
+
+```typescript
+type FormatItems =
+    | { type: "string";  description?: string; enum?: string[] }
+    | { type: "number";  description?: string }
+    | { type: "integer"; description?: string }
+    | { type: "boolean"; description?: string }
+    | { type: "array";   description?: string; items?: FormatItems; minItems?: number; maxItems?: number }
+    | { type: "object";  description?: string; required?: string[]; properties?: { [key: string]: FormatProperty } };
+```
+
+<Note>
+  `FormatItems` is only used inside the `items` field of an array property. You
+  never pass it as a top-level schema or as a direct property value.
+</Note>
+
+## Full Schema Example
+
+The following schema exercises all six property types, including a nested object and a typed array:
+
+```typescript
+import { generateObject, InferenceName, type FormatModel } from 'json-inference';
+
+const schema = {
+  type: "object",
+  required: ["title", "score", "votes", "published", "tags", "author"],
+  properties: {
+    // string with enum constraint
+    title: {
+      type: "string",
+      description: "Title of the article",
+    },
+    // number (floating-point)
+    score: {
+      type: "number",
+      description: "Quality score from 0.0 to 10.0",
+    },
+    // integer
+    votes: {
+      type: "integer",
+      description: "Total number of upvotes",
+    },
+    // boolean
+    published: {
+      type: "boolean",
+      description: "Whether the article has been published",
+    },
+    // array of strings
+    tags: {
+      type: "array",
+      description: "Relevant topic tags",
+      items: { type: "string" },
+      minItems: 1,
+      maxItems: 5,
+    },
+    // nested object
+    author: {
+      type: "object",
+      description: "The article's author",
+      required: ["name", "email"],
+      properties: {
+        name:  { type: "string", description: "Author full name" },
+        email: { type: "string", description: "Author email address" },
+      },
+    },
+  },
+} as const satisfies FormatModel;
+
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  { format: schema, messages: [{ role: "user", content: "Generate a sample article metadata object." }] },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+
+// TypeScript infers the full shape:
+// result.title     → string
+// result.score     → number
+// result.votes     → number
+// result.published → boolean
+// result.tags      → string[]
+// result.author    → { name: string; email: string }
+console.log(result.author.name);
+```
+
+<Tip>
+  Use `as const satisfies FormatModel` when defining your schema inline. The
+  `as const` ensures TypeScript reads the literal types in `properties`, which
+  powers the `InferFormat<F>` return type. The `satisfies FormatModel`
+  constraint catches typos in property type strings at compile time.
+</Tip>

@@ -1,0 +1,97 @@
+---
+title: "json-inference: Structured JSON from 12 LLM Providers"
+sidebarTitle: "Introduction"
+description: "json-inference solves broken structured output across LLM providers using a tool-calling strategy — one function call returns typed, validated JSON from any of 12 providers."
+---
+
+`json-inference` is a zero-boilerplate TypeScript/JavaScript library that delivers structured, schema-validated JSON from 12 different LLM providers through a single `generateObject()` function. Whether you're building an AI-powered trading signal parser, a sentiment analyzer, or any pipeline that needs reliable machine-readable output from a language model, this library handles the hard parts — malformed JSON, missing fields, provider inconsistencies — so you don't have to.
+
+## The Problem It Solves
+
+Most developers reach for `response_format` when they need structured JSON from an LLM. But many popular providers — Groq, Ollama, Claude, DeepSeek, Mistral, Hugging Face, and Alibaba — support **tool calling** while offering unreliable or no support for `response_format` / structured outputs. The result is free-form text, malformed JSON, or outright refusals where you expected a clean object.
+
+`json-inference` bridges this gap by turning your JSON schema into a structured output mechanism that works on every supported provider.
+
+## How It Works
+
+The library picks one of two strategies automatically, based on the provider:
+
+<CardGroup cols={2}>
+  <Card title="Tool-Calling Strategy" icon="wrench">
+    Your JSON schema becomes the argument definition of a synthetic `provide_answer` tool. The model is forced to call it via `tool_choice`. The returned arguments are extracted, repaired with `jsonrepair`, validated against your `required` fields, and retried up to 3–5 times on failure.
+
+    **Used by:** Claude, DeepSeek, Mistral, Groq, Ollama, Alibaba, Hugging Face
+  </Card>
+  <Card title="Response Format Strategy" icon="brackets-curly">
+    The library passes your schema directly as a native `json_schema` `response_format`. A single API call is made and the parsed content is returned immediately — no tool gymnastics needed.
+
+    **Used by:** OpenAI, Grok, Perplexity, Cohere, GLM-4
+  </Card>
+</CardGroup>
+
+The strategy is selected per provider. Your code stays identical regardless of which one you target.
+
+## Supported Providers
+
+| Provider | `InferenceName` | Strategy | Base URL |
+|---|---|---|---|
+| OpenAI | `GPT5Inference` | response\_format | `api.openai.com` |
+| Claude | `ClaudeInference` | tool-calling | `api.anthropic.com/v1/` |
+| DeepSeek | `DeepseekInference` | tool-calling | `api.deepseek.com` |
+| Grok | `GrokInference` | response\_format | `api.x.ai/v1/` |
+| Mistral | `MistralInference` | tool-calling | `api.mistral.ai/v1/` |
+| Perplexity | `PerplexityInference` | response\_format | `api.perplexity.ai` |
+| Cohere | `CohereInference` | response\_format | `api.cohere.ai/compatibility/v1` |
+| Alibaba | `AlibabaInference` | tool-calling | `dashscope-intl.aliyuncs.com` |
+| Hugging Face | `HfInference` | tool-calling | `router.huggingface.co/v1/` |
+| Ollama | `OllamaInference` | tool-calling | `localhost:11434` |
+| GLM-4 | `GLM4Inference` | response\_format | `api.z.ai/api/paas/v4/` |
+| Groq | `GroqInference` | tool-calling | `api.groq.com` |
+
+## Key Features
+
+- **Single API** — one `generateObject()` call for all 12 providers
+- **Type inference** — return type is derived from your schema via `InferFormat<T>`; works in plain JavaScript with full IDE completion
+- **Automatic JSON repair** — malformed tool call arguments are fixed via `jsonrepair` before validation
+- **Retry logic** — up to 3–5 automatic retries with tool-forcing on failure
+- **Schema validation** — all `required` fields are checked before the result is returned
+- **ESM + CJS** — dual build; works in Node.js, bundlers, and TypeScript projects
+- **Zero config** — no provider setup classes or SDK instantiation required
+
+## Exports at a Glance
+
+```typescript
+// Core function
+import { generateObject } from "json-inference";
+
+// Provider selector enum
+import { InferenceName } from "json-inference";
+
+// Types (TypeScript)
+import type { IOutlineParams, FormatModel, FormatProperty, InferFormat } from "json-inference";
+
+// Utilities
+import { generateText } from "json-inference";
+```
+
+<Note>
+  `generateText` is also exported for plain, non-structured completions using the same provider abstraction. The `InferenceName` enum, `IOutlineParams`, and all schema types are fully exported for use in TypeScript projects.
+</Note>
+
+## Who It's For
+
+This library is a great fit for:
+
+- **AI pipeline builders** who need structured data from multiple providers without writing custom adapters
+- **TypeScript developers** who want schema-derived return types without manual casting
+- **Cost-optimizers** who want to switch between providers by changing a single argument
+- **Local-first developers** using Ollama who want the same API surface as cloud providers
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Make your first `generateObject()` call in under 5 minutes with a full working example.
+  </Card>
+  <Card title="Provider Overview" icon="server" href="/providers/overview">
+    Compare all 12 supported providers, their strategies, model names, and required API keys.
+  </Card>
+</CardGroup>

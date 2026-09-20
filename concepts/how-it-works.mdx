@@ -1,0 +1,204 @@
+---
+title: "How json-inference Generates Structured Output"
+sidebarTitle: "How It Works"
+description: "Understand the two execution strategies, the RunnerAdapter provider registry, and the full request-to-JSON lifecycle powering every generateObject() call."
+---
+
+Every call to `generateObject()` routes through a unified pipeline that abstracts away the differences between twelve LLM providers. Depending on the provider you select, the library transparently switches between two strategies — native `response_format` for providers that support it, and a tool-calling shim for those that don't — while exposing an identical API surface in both cases.
+
+## The Two Execution Strategies
+
+Not all LLM providers support structured JSON output in the same way. `json-inference` handles this with a per-provider strategy that is determined at registration time, not at call time.
+
+<CardGroup cols={2}>
+  <Card title="response_format" icon="file-code">
+    The provider accepts a `json_schema` in the `response_format` field of the
+    chat completion request. The model returns structured JSON directly in the
+    message content. A single API call is made; no retry loop is needed.
+
+    **Providers:** OpenAI (`GPT5Inference`), Grok (`GrokInference`),
+    Perplexity (`PerplexityInference`), Cohere (`CohereInference`),
+    GLM-4 (`GLM4Inference`)
+  </Card>
+  <Card title="tool-calling" icon="wrench">
+    The provider does not reliably support `response_format`. Instead, your
+    schema is wrapped in a synthetic `provide_answer` tool definition, the
+    model is forced to call it via `tool_choice`, and the function arguments
+    are extracted, repaired, and validated. Up to 5 retry attempts are made on
+    failure.
+
+    **Providers:** Claude (`ClaudeInference`), DeepSeek (`DeepseekInference`),
+    Mistral (`MistralInference`), Hugging Face (`HfInference`), Ollama
+    (`OllamaInference`), Alibaba (`AlibabaInference`), Groq (`GroqInference`)
+  </Card>
+</CardGroup>
+
+## The `provide_answer` Tool Pattern
+
+For tool-calling providers, `json-inference` turns your JSON schema into a synthetic tool that the model is compelled to call. Here is what that looks like in practice for the Claude provider:
+
+```typescript
+// Your FormatModel schema becomes a tool definition
+const toolDefinition = {
+  type: "function",
+  function: {
+    name: "provide_answer",
+    description: "Предоставить ответ в требуемом формате",
+    parameters: schema,   // your FormatModel passed directly as parameters
+  },
+};
+
+// The model is forced to call it — no free-text escape hatch
+const requestOptions = {
+  model,
+  messages,
+  tools: [toolDefinition],
+  tool_choice: {
+    type: "function",
+    function: { name: "provide_answer" },
+  },
+};
+```
+
+Once the model responds, the library reads `tool_calls[0].function.arguments`, runs it through `jsonrepair`, parses it, and validates it against your schema before returning. If any of those steps fail, the attempt is retried (see [Retry & Repair](/concepts/retry-and-repair) for the full loop).
+
+## The RunnerAdapter Registry
+
+All provider classes implement the `IProvider` interface, and each is registered under its `InferenceName` enum value. The `RunnerAdapter` (exported as the singleton `Runner`) holds a `ToolRegistry` keyed by `InferenceName` and lazily instantiates providers on first use via `memoize`.
+
+```typescript
+// src/classes/Runner.ts
+export class RunnerAdapter {
+  private _registry = new ToolRegistry<Record<InferenceName, RunnerClass>>(
+    "runner_registry",
+  );
+
+  private getRunner = memoize(
+    ([inference]) => `${inference}`,
+    (inference: InferenceName) => {
+      const Runner = this._registry.get(inference);
+      return new Runner(logger);
+    },
+  );
+
+  public getOutlineCompletion = async (
+    inferenceName: InferenceName,
+    params: IOutlineParams,
+    model: string,
+    apiKey?: string
+  ): Promise<MessageModel> => {
+    const runner = this.getRunner(inferenceName);
+    return await runner.getOutlineCompletion(params, model, apiKey);
+  };
+
+  public registerRunner = (name: InferenceName, runner: RunnerClass) => {
+    this._registry = this._registry.register(name, runner);
+  };
+}
+
+export const Runner = new RunnerAdapter();
+```
+
+<Note>
+  Provider instances are memoized: the first call for a given `InferenceName`
+  constructs the class; subsequent calls reuse the same instance for the
+  lifetime of the process.
+</Note>
+
+The `InferenceName` enum maps human-readable names to stable string keys used as registry identifiers:
+
+```typescript
+export enum InferenceName {
+  OllamaInference     = "ollama_inference",
+  GrokInference       = "grok_inference",
+  HfInference         = "hf_inference",
+  ClaudeInference     = "claude_inference",
+  GPT5Inference       = "gpt5_inference",
+  GLM4Inference       = "glm4_inference",
+  DeepseekInference   = "deepseek_inference",
+  MistralInference    = "mistral_inference",
+  PerplexityInference = "perplexity_inference",
+  CohereInference     = "cohere_inference",
+  AlibabaInference    = "alibaba_inference",
+  GroqInference       = "groq_inference",
+}
+```
+
+## The Full Call Flow
+
+The following steps trace a single `generateObject()` call from your application code to the returned typed object.
+
+<Steps>
+  <Step title="generateObject() is called">
+    Your code calls `generateObject(inferenceName, params, model, apiKey)`.
+    The function is generic over `F extends FormatModel`, so TypeScript can
+    infer the return type from your `params.format` schema.
+
+    ```typescript
+    // src/functions/generate.function.ts
+    export const generateObject = async <F extends FormatModel>(
+      inferenceName: InferenceName,
+      params: IOutlineParams<F>,
+      model: string,
+      apiKey?: string,
+    ): Promise<InferFormat<F>> => {
+      const { content } = await Runner.getOutlineCompletion(
+        inferenceName,
+        params,
+        model,
+        apiKey,
+      );
+      return JSON.parse(content);
+    };
+    ```
+  </Step>
+
+  <Step title="Runner.getOutlineCompletion() dispatches to the provider">
+    The `RunnerAdapter` singleton looks up the provider class registered under
+    `inferenceName`, lazily instantiates it (memoized), then calls its
+    `getOutlineCompletion(params, model, apiKey)` method.
+  </Step>
+
+  <Step title="Provider executes the strategy-specific API call">
+    **response_format path** — The provider constructs a `json_schema`
+    `response_format` object and sends a single chat completion request. The
+    model's message content is the JSON string.
+
+    **tool-calling path** — The provider builds the `provide_answer` tool
+    definition, injects a system prompt instructing the model to always call
+    the tool, and enters the retry loop. Each attempt reads
+    `tool_calls[0].function.arguments`, repairs it with `jsonrepair`, and
+    validates it with `validateToolArguments`. On success, the validated
+    object is re-serialized to JSON and returned as `message.content`.
+  </Step>
+
+  <Step title="generateObject() parses and returns the typed result">
+    Back in `generate.function.ts`, `JSON.parse(content)` converts the
+    validated JSON string to a plain object. TypeScript types this as
+    `InferFormat<F>` — a mapped type built directly from your schema's
+    `properties`. No casting required.
+  </Step>
+</Steps>
+
+## Provider Strategy Reference
+
+| Provider | `InferenceName` | Strategy | Base URL |
+|---|---|---|---|
+| OpenAI | `GPT5Inference` | `response_format` | `api.openai.com` |
+| Claude | `ClaudeInference` | tool-calling | `api.anthropic.com/v1/` |
+| DeepSeek | `DeepseekInference` | tool-calling | `api.deepseek.com` |
+| Grok | `GrokInference` | `response_format` | `api.x.ai/v1/` |
+| Mistral | `MistralInference` | tool-calling | `api.mistral.ai/v1/` |
+| Perplexity | `PerplexityInference` | `response_format` | `api.perplexity.ai` |
+| Cohere | `CohereInference` | `response_format` | `api.cohere.ai/compatibility/v1` |
+| Alibaba | `AlibabaInference` | tool-calling | `dashscope-intl.aliyuncs.com` |
+| Hugging Face | `HfInference` | tool-calling | `router.huggingface.co/v1/` |
+| Ollama | `OllamaInference` | tool-calling | `localhost:11434` |
+| GLM-4 | `GLM4Inference` | `response_format` | `api.z.ai/api/paas/v4/` |
+| Groq | `GroqInference` | tool-calling | `api.groq.com` |
+
+<Tip>
+  Switching providers only requires changing the first argument to
+  `generateObject()`. Your `format` schema and `messages` array stay exactly
+  the same across all twelve providers.
+</Tip>

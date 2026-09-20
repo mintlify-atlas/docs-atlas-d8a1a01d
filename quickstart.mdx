@@ -1,47 +1,243 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with json-inference in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Follow this step-by-step guide to make your first generateObject() call, define a schema, pick a provider with InferenceName, and read back a fully typed result."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through making your first structured `generateObject()` call using Groq as the provider — the same setup used in the library's own test suite. By the end you'll have a working example and understand exactly how to swap providers, define schemas, and consume typed results.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+## Install the library
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+If you haven't installed yet, add `json-inference` and its peer dependencies:
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
+```bash
+npm install json-inference openai ollama groq-sdk
+```
+
+You need a Groq API key for this example. Sign up at [console.groq.com](https://console.groq.com) and export the key:
+
+```bash
+export GROQ_API_KEY="gsk_..."
+```
+
+## Import `generateObject` and `InferenceName`
+
+Both are named exports from the `json-inference` package. `InferenceName` is an enum that selects the provider; `generateObject` is the single function you call for every structured output request.
+
+```typescript
+import { generateObject, InferenceName } from "json-inference";
+```
+
+## Define your output schema
+
+The `format` field accepts a JSON schema object — specifically a `FormatModel` shape with a `type`, a `required` array, and a `properties` map. Each property has a `type` and a `description` that the model uses to understand what to fill in.
+
+```typescript
+const format = {
+  type: "object",
+  required: ["message"],
+  properties: {
+    message: {
+      type: "string",
+      description: "Message content",
+    },
+  },
+} as const;
+```
+
+<Note>
+  Supported property types are `"string"`, `"number"`, `"integer"`, `"boolean"`, `"array"`, and `"object"`. String properties may also include an `enum` array to restrict to specific values.
+</Note>
+
+## Call `generateObject`
+
+Pass the provider enum value, the `format` and `messages` params, the model name, and your API key as the final argument. The function returns a `Promise` that resolves to a typed object matching your schema.
+
+```typescript
+const result = await generateObject(
+  InferenceName.GroqInference,         // Provider
+  {
+    messages: [
+      {
+        role: "user",
+        content: 'Return the string "Hello world!" in the message field.',
+      },
+    ],
+    format,                             // Schema defined above
+  },
+  "qwen/qwen3-32b",                    // Model name
+  process.env.GROQ_API_KEY,            // API key
+);
+```
+
+## Read the typed result
+
+`result.message` is typed as `string` automatically — TypeScript infers the return type directly from the `format` schema via `InferFormat<F>`. No type assertions or generics needed.
+
+```typescript
+console.log(result.message);
+// → "Hello world!"
+```
+
+In a richer schema, every field maps to the TypeScript primitive that corresponds to its JSON schema `type`:
+
+| Schema `type` | TypeScript type |
+|---|---|
+| `"string"` | `string` |
+| `"number"` | `number` |
+| `"integer"` | `number` |
+| `"boolean"` | `boolean` |
+| `"array"` | `any[]` |
+| `"object"` | `Record<string, any>` |
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Complete Working Example
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+Here is the full example from the library's own test file, annotated:
+
+```typescript
+import { generateObject, InferenceName } from "json-inference";
+
+const result = await generateObject(
+  InferenceName.GroqInference,
+  {
+    messages: [
+      {
+        role: "user",
+        content: 'Return the string "Hello world!" in the message field.',
+      },
+    ],
+    format: {
+      type: "object",
+      required: ["message"],
+      properties: {
+        message: {
+          type: "string",
+          description: "Message content",
+        },
+      },
+    },
+  },
+  "qwen/qwen3-32b",
+  process.env.GROQ_API_KEY,
+);
+
+// TypeScript knows result.message is a string
+console.log(result.message);
+```
+
+## Switching to a Different Provider
+
+Changing providers is a one-line edit — update `InferenceName` and the model name. The schema and messages stay exactly the same:
+
+<CodeGroup>
+```typescript OpenAI
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  { messages, format },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+```
+
+```typescript Claude
+const result = await generateObject(
+  InferenceName.ClaudeInference,
+  { messages, format },
+  "claude-3-5-sonnet-20241022",
+  process.env.CLAUDE_API_KEY,
+);
+```
+
+```typescript DeepSeek
+const result = await generateObject(
+  InferenceName.DeepseekInference,
+  { messages, format },
+  "deepseek-chat",
+  process.env.DEEPSEEK_API_KEY,
+);
+```
+
+```typescript Ollama (local)
+// No API key needed for local Ollama
+const result = await generateObject(
+  InferenceName.OllamaInference,
+  { messages, format },
+  "llama3.3:70b",
+);
+```
+</CodeGroup>
+
+<Tip>
+  Ollama is the only provider that accepts no API key — it connects to a locally running Ollama server at `localhost:11434` by default.
 </Tip>
+
+## Richer Schema Example
+
+Here is a more complete schema demonstrating multiple types and an `enum` constraint:
+
+```typescript
+import { generateObject, InferenceName } from "json-inference";
+
+const result = await generateObject(
+  InferenceName.GroqInference,
+  {
+    messages: [
+      {
+        role: "user",
+        content: "Analyze this review: 'Battery life is terrible but the screen is gorgeous.'",
+      },
+    ],
+    format: {
+      type: "object",
+      required: ["sentiment", "confidence", "mentioned_aspects", "recommend"],
+      properties: {
+        sentiment: {
+          type: "string",
+          description: "Overall sentiment of the review",
+          enum: ["positive", "negative", "mixed", "neutral"],
+        },
+        confidence: {
+          type: "number",
+          description: "Confidence score between 0 and 1",
+        },
+        mentioned_aspects: {
+          type: "array",
+          description: "Product aspects explicitly mentioned in the review",
+        },
+        recommend: {
+          type: "boolean",
+          description: "Whether the reviewer would recommend the product",
+        },
+      },
+    },
+  },
+  "qwen/qwen3-32b",
+  process.env.GROQ_API_KEY,
+);
+
+// TypeScript-typed fields:
+// result.sentiment          → string
+// result.confidence         → number
+// result.mentioned_aspects  → any[]
+// result.recommend          → boolean
+console.log(result.sentiment, result.confidence);
+```
+
+<Warning>
+  Every field listed in the `required` array must be present in `properties`. The library validates that all required fields are present in the response before returning — if they are missing after retries, an error is thrown.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Overview" icon="server" href="/providers/overview">
+    See all 12 providers, their strategies, accepted model names, and base URLs.
+  </Card>
+  <Card title="Installation" icon="package" href="/installation">
+    Details on peer dependencies, ESM/CJS support, and TypeScript configuration.
+  </Card>
+</CardGroup>

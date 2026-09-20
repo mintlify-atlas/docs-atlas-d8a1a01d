@@ -1,0 +1,130 @@
+---
+title: "Using DeepSeek with json-inference"
+sidebarTitle: "DeepSeek"
+description: "json-inference uses tool-calling to extract structured JSON from DeepSeek models. Covers API key setup, the deepseek-chat model, retry logic, and a complete code example."
+---
+
+`json-inference` connects to DeepSeek using `InferenceName.DeepseekInference`. DeepSeek does not reliably support `response_format`, so the library falls back to the **tool-calling strategy**: your JSON schema is wrapped as a `provide_answer` tool, and the model is forced to call it via `tool_choice`. Arguments are extracted, repaired with `jsonrepair`, and validated — with up to **3 retries** (`MAX_ATTEMPTS = 3`) on failure.
+
+## Provider Details
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.DeepseekInference` |
+| **Strategy** | tool-calling (`provide_answer` tool) |
+| **Base URL** | `https://api.deepseek.com` |
+| **Peer dependency** | `openai` (OpenAI-compatible SDK) |
+| **Max retries** | 3 |
+
+## Getting an API Key
+
+<Steps>
+  <Step title="Sign in to DeepSeek Platform">
+    Go to [platform.deepseek.com](https://platform.deepseek.com) and sign in or create an account.
+  </Step>
+  <Step title="Create an API Key">
+    Navigate to **API Keys** and generate a new key. Copy it before closing the dialog.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash
+    export DEEPSEEK_API_KEY="sk-..."
+    ```
+  </Step>
+</Steps>
+
+## Recommended Models
+
+| Model | Notes |
+|---|---|
+| `deepseek-chat` | General-purpose chat model, strong instruction following |
+
+## How It Works
+
+`DeepseekProvider` initialises an OpenAI client pointed at `https://api.deepseek.com`. On each attempt it:
+
+1. Converts your `format` schema into a `provide_answer` function tool definition.
+2. Prepends a system message that instructs the model to use the tool exclusively.
+3. Sends the request with `tool_choice: { type: "function", function: { name: "provide_answer" } }`.
+4. Extracts `tool_calls[0].function.arguments`, applies `jsonrepair`, and validates all `required` fields.
+5. Retries up to 3 times if the model refuses, skips the tool, returns malformed JSON, or fails validation.
+
+## Code Example
+
+<CodeGroup>
+  ```typescript Trading Signal Analysis
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.DeepseekInference,
+    {
+      format: {
+        type: "object",
+        required: ["position", "price", "stop_loss", "confirmed"],
+        properties: {
+          position:  { type: "string",  description: "long, short, or wait" },
+          price:     { type: "number",  description: "Entry price in USD" },
+          stop_loss: { type: "number",  description: "Stop-loss price in USD" },
+          confirmed: { type: "boolean", description: "Signal confirmed by indicator" },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "ETH is trading at $3,200, RSI is 65, MACD shows bullish crossover. Provide a trade signal.",
+        },
+      ],
+    },
+    "deepseek-chat",
+    process.env.DEEPSEEK_API_KEY,
+  );
+
+  // TypeScript/IDE infers:
+  // result.position  → string
+  // result.price     → number
+  // result.stop_loss → number
+  // result.confirmed → boolean
+  console.log(result.position, result.price, result.stop_loss);
+  ```
+
+  ```typescript Structured Extraction
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.DeepseekInference,
+    {
+      format: {
+        type: "object",
+        required: ["title", "author", "year"],
+        properties: {
+          title:  { type: "string",  description: "Book title" },
+          author: { type: "string",  description: "Author's full name" },
+          year:   { type: "integer", description: "Publication year" },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "Extract: 'The Pragmatic Programmer was written by Andrew Hunt and David Thomas in 1999.'",
+        },
+      ],
+    },
+    "deepseek-chat",
+    process.env.DEEPSEEK_API_KEY,
+  );
+
+  console.log(result.title, result.author, result.year);
+  ```
+</CodeGroup>
+
+## Retry Behaviour
+
+<Warning>
+  If `deepseek-chat` fails to invoke the `provide_answer` tool after **3 attempts**, `generateObject()` throws:
+  `Error: Model failed to use tool after maximum attempts`
+</Warning>
+
+The retry loop handles four failure modes automatically:
+- Model returns a **refusal** — increments attempt counter.
+- Model responds with **plain text** instead of a tool call — appends a follow-up user message (once) and retries.
+- Tool arguments are **invalid JSON** — `jsonrepair` is tried first; if it still fails, retries.
+- Parsed arguments **fail schema validation** (missing required fields) — retries with a reminder message.

@@ -1,0 +1,201 @@
+---
+title: "InferFormat<T> — Derive TypeScript Types from JSON Schemas"
+sidebarTitle: "InferFormat"
+description: "Reference for the InferFormat<T> generic mapped type that derives TypeScript return types from a FormatModel schema automatically, without explicit type annotations."
+---
+
+`InferFormat<T>` is the mapped type that gives `generateObject()` its return type. It reads the `properties` map of your `FormatModel` schema at the type level and produces a plain TypeScript object type whose keys and value types mirror the schema exactly. Because TypeScript infers the generic `F` from the `params.format` argument, you get full autocomplete on the result object without writing a single type annotation. The same inference works in plain JavaScript projects — your IDE does the work for you.
+
+## Type Definitions
+
+### `InferFormat<T>`
+
+```typescript
+export type InferFormat<T extends FormatModel> = {
+    [K in keyof T["properties"]]: InferProperty<T["properties"][K]>;
+};
+```
+
+A mapped type that iterates over every key in `T["properties"]` and applies `InferProperty` to the corresponding `FormatProperty` value. The result is a concrete object type with one TypeScript property per schema property.
+
+### `InferProperty<T>`
+
+```typescript
+type InferProperty<T> = T extends { type: "string" }
+    ? string
+    : T extends { type: "number" }
+        ? number
+        : T extends { type: "integer" }
+            ? number
+            : T extends { type: "boolean" }
+                ? boolean
+                : T extends { type: "array"; items: infer I }
+                    ? InferProperty<I>[]
+                    : T extends { type: "array" }
+                        ? any[]
+                        : T extends { type: "object"; properties: infer P }
+                            ? { [K in keyof P]: InferProperty<P[K]> }
+                            : T extends { type: "object" }
+                                ? Record<string, any>
+                                : any;
+```
+
+A recursive conditional type that maps every `FormatProperty` variant to its TypeScript equivalent. The chain is evaluated top-to-bottom — more specific conditions (array with items, object with properties) are checked before their generic fallbacks.
+
+## Schema Type → TypeScript Type Mapping
+
+| Schema `type` | Condition | TypeScript type |
+|---|---|---|
+| `"string"` | any | `string` |
+| `"number"` | any | `number` |
+| `"integer"` | any | `number` |
+| `"boolean"` | any | `boolean` |
+| `"array"` | `items` property present | `InferProperty<items>[]` |
+| `"array"` | no `items` property | `any[]` |
+| `"object"` | `properties` map present | `{ [K in keyof P]: InferProperty<P[K]> }` |
+| `"object"` | no `properties` map | `Record<string, any>` |
+| any other | — | `any` |
+
+<Note>
+  Both `"number"` and `"integer"` map to TypeScript `number`. JavaScript has no
+  separate integer primitive type, so the distinction is semantic (passed to the
+  model as a hint) rather than structural in the resulting TypeScript type.
+</Note>
+
+## Nested Arrays and Objects
+
+`InferProperty` is recursive. Deep nesting resolves correctly as long as every level uses literal `type` values:
+
+```typescript
+// Schema fragment
+const schema = {
+  type: "object",
+  required: ["team"],
+  properties: {
+    team: {
+      type: "object",
+      description: "Project team",
+      properties: {
+        members: {
+          type: "array",
+          description: "List of team members",
+          items: {
+            type: "object",
+            properties: {
+              name:   { type: "string" },
+              active: { type: "boolean" },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+// Inferred type of result:
+// {
+//   team: {
+//     members: Array<{ name: string; active: boolean }>
+//   }
+// }
+```
+
+## Using `InferFormat` Explicitly
+
+You can reference `InferFormat` directly as a type alias — useful for annotating functions that process `generateObject()` results:
+
+```typescript
+import { type InferFormat, type FormatModel } from 'json-inference';
+
+const personSchema = {
+  type: "object",
+  required: ["name", "age"],
+  properties: {
+    name: { type: "string",  description: "Full name" },
+    age:  { type: "integer", description: "Age in years" },
+  },
+} as const satisfies FormatModel;
+
+// Derive the type manually
+type Person = InferFormat<typeof personSchema>;
+// → { name: string; age: number }
+
+function greet(person: Person): string {
+  return `Hello ${person.name}, you are ${person.age} years old.`;
+}
+```
+
+## Automatic Inference (No Annotations Needed)
+
+The most common pattern is to let TypeScript infer `F` automatically. When `params.format` is an inline object literal declared `as const`, TypeScript captures the literal types and `InferFormat` resolves the exact shape:
+
+<CodeGroup>
+```typescript TypeScript — automatic inference
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.DeepseekInference,
+  {
+    format: {
+      type: "object",
+      required: ["position", "price", "confirmed"],
+      properties: {
+        position:  { type: "string",  description: "long, short, or wait" },
+        price:     { type: "number",  description: "Entry price in USD" },
+        confirmed: { type: "boolean", description: "Signal confirmed by indicators" },
+      },
+    } as const,
+    messages: [{ role: "user", content: "Analyze BTC at $95,000. Should I go long?" }],
+  },
+  "deepseek-chat",
+  process.env.DEEPSEEK_API_KEY,
+);
+
+// IDE infers without any annotation:
+// result.position  → string
+// result.price     → number
+// result.confirmed → boolean
+result.position.toUpperCase();   // ✅ string method available
+result.price.toFixed(2);         // ✅ number method available
+```
+
+```typescript JavaScript — IDE inference still works
+import { generateObject, InferenceName } from 'json-inference';
+
+// No TypeScript needed — your IDE still infers from the schema literal
+const result = await generateObject(
+  InferenceName.OllamaInference,
+  {
+    format: {
+      type: "object",
+      required: ["summary", "wordCount"],
+      properties: {
+        summary:   { type: "string",  description: "One paragraph summary" },
+        wordCount: { type: "integer", description: "Number of words in the text" },
+      },
+    },
+    messages: [{ role: "user", content: "Summarize: 'The quick brown fox...'" }],
+  },
+  "llama3.3:70b",
+);
+
+// JSDoc or IDE hover shows: result.summary → string, result.wordCount → number
+console.log(result.summary.length);
+console.log(result.wordCount + 1);
+```
+</CodeGroup>
+
+<Tip>
+  For the best inference experience in TypeScript, always use `as const` (or
+  `as const satisfies FormatModel`) on the `format` object. Without `as const`,
+  TypeScript widens the `type` fields to `string` and `InferFormat` falls back
+  to `any` for all properties.
+</Tip>
+
+## Import
+
+`InferFormat` is a type-only export. Import it with the `type` keyword to keep your runtime bundle clean:
+
+```typescript
+import { type InferFormat, type FormatModel } from 'json-inference';
+```

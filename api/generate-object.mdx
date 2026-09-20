@@ -1,0 +1,179 @@
+---
+title: "generateObject() — Structured JSON from Any LLM"
+sidebarTitle: "generateObject()"
+description: "Full reference for generateObject(inferenceName, params, model, apiKey). Returns a typed JSON object inferred from your FormatModel schema via InferFormat<F>."
+---
+
+`generateObject()` is the primary function in `json-inference`. It sends your schema and conversation history to any of the 12 supported providers and returns a fully-typed JavaScript object whose shape is derived at compile time from your `FormatModel` definition. Internally, it routes to either a native `response_format` path or a tool-calling `provide_answer` strategy, retries up to five times on malformed output, repairs broken JSON with `jsonrepair`, and validates required fields before resolving.
+
+## Signature
+
+```typescript
+generateObject<F extends FormatModel>(
+  inferenceName: InferenceName,
+  params: IOutlineParams<F>,
+  model: string,
+  apiKey?: string,
+): Promise<InferFormat<F>>
+```
+
+The generic parameter `F` is inferred from the `params.format` value you pass — you never need to write it explicitly.
+
+## Parameters
+
+<ParamField path="inferenceName" type="InferenceName" required>
+  The provider to route the request to. Use a member of the `InferenceName` enum, e.g. `InferenceName.GPT5Inference` or `InferenceName.OllamaInference`. Each value maps to a specific HTTP base URL and completion strategy. See the [InferenceName reference](/api/inference-name) for all 12 values.
+</ParamField>
+
+<ParamField path="params" type="IOutlineParams<F>" required>
+  An object containing both the output schema and the conversation history.
+
+  <Expandable title="IOutlineParams fields">
+    <ParamField path="params.format" type="FormatModel" required>
+      A JSON-schema-like object that describes the shape of the value you want back. The `type` field must be `"object"`. The `required` array lists the property names the model must populate. The `properties` map defines each field with a `FormatProperty` entry. See [FormatModel reference](/api/format-model) for all property variants including nested objects and arrays.
+    </ParamField>
+
+    <ParamField path="params.messages" type="MessageModel[]" required>
+      The conversation history to send to the model. At minimum, include one `user` message. You may prepend a `system` message to set behavior. Multi-turn exchanges are supported by appending prior `assistant` replies. See [MessageModel reference](/api/message-model) for the full interface including the optional `images` field.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  The provider-specific model identifier string, e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20241022"`, `"deepseek-chat"`, `"llama3.3:70b"`, or `"llama-3.3-70b-versatile"`. The library passes this value directly to the provider's API — consult each provider's documentation for valid model names.
+</ParamField>
+
+<ParamField path="apiKey" type="string">
+  Your API key for the chosen provider. This is optional only for `InferenceName.OllamaInference` (local Ollama server). For every other provider an API key is required.
+</ParamField>
+
+## Return Value
+
+```typescript
+Promise<InferFormat<F>>
+```
+
+The promise resolves to a plain JavaScript object whose TypeScript type is derived directly from the `properties` map in your `format` schema. For example, if your schema has a `string` property `name` and a `number` property `score`, the resolved type is `{ name: string; score: number }` — no explicit annotation needed.
+
+<Tip>
+  Type inference works in plain JavaScript projects too. Your IDE reads the
+  inferred generic from the `format` literal and provides autocomplete on the
+  result object without any `as const` or explicit type imports.
+</Tip>
+
+## Errors
+
+<Warning>
+  `generateObject()` throws an error if the model refuses to produce valid JSON
+  after exhausting all retry attempts (up to 5). Catch the rejection and handle
+  it as a hard failure — partial or `undefined` results are never returned.
+</Warning>
+
+## Code Example
+
+<CodeGroup>
+```typescript Sentiment analysis (OpenAI)
+import { generateObject, InferenceName } from 'json-inference';
+
+const schema = {
+  type: "object",
+  required: ["sentiment", "confidence", "summary"],
+  properties: {
+    sentiment:  { type: "string",  description: "positive, negative, or neutral" },
+    confidence: { type: "number",  description: "Confidence score between 0 and 1" },
+    summary:    { type: "string",  description: "One-sentence summary of the review" },
+  },
+} as const;
+
+const result = await generateObject(
+  InferenceName.GPT5Inference,
+  {
+    format: schema,
+    messages: [
+      {
+        role: "system",
+        content: "You are a sentiment analysis assistant.",
+      },
+      {
+        role: "user",
+        content: "Analyze: 'Best purchase I've made this year — fast shipping, great quality!'",
+      },
+    ],
+  },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+
+// TypeScript infers from schema:
+// result.sentiment  → string
+// result.confidence → number
+// result.summary    → string
+console.log(result.sentiment, result.confidence);
+```
+
+```typescript Nested objects (Ollama, no key)
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.OllamaInference,
+  {
+    format: {
+      type: "object",
+      required: ["person"],
+      properties: {
+        person: {
+          type: "object",
+          description: "Extracted person entity",
+          required: ["name", "age"],
+          properties: {
+            name: { type: "string",  description: "Full name" },
+            age:  { type: "integer", description: "Age in years" },
+          },
+        },
+      },
+    },
+    messages: [
+      { role: "user", content: "Extract the person: 'Alice turned 30 last Tuesday.'" },
+    ],
+  },
+  "llama3.3:70b",
+  // No apiKey needed for local Ollama
+);
+
+console.log(result.person.name); // "Alice"
+console.log(result.person.age);  // 30
+```
+
+```typescript Switching providers
+import { generateObject, InferenceName } from 'json-inference';
+
+const params = {
+  format: {
+    type: "object",
+    required: ["answer"],
+    properties: {
+      answer: { type: "string", description: "The answer to the question" },
+    },
+  },
+  messages: [{ role: "user", content: "What is the capital of France?" }],
+} as const;
+
+// Swap the first argument to change providers — everything else stays the same
+await generateObject(InferenceName.GPT5Inference,       params, "gpt-4o",                        process.env.OPENAI_API_KEY);
+await generateObject(InferenceName.ClaudeInference,     params, "claude-3-5-sonnet-20241022",     process.env.CLAUDE_API_KEY);
+await generateObject(InferenceName.DeepseekInference,   params, "deepseek-chat",                  process.env.DEEPSEEK_API_KEY);
+await generateObject(InferenceName.GroqInference,       params, "llama-3.3-70b-versatile",        process.env.GROQ_API_KEY);
+await generateObject(InferenceName.OllamaInference,     params, "llama3.3:70b");
+```
+</CodeGroup>
+
+## How the Retry Strategy Works
+
+Providers fall into two categories based on their capabilities:
+
+| Strategy | Providers | Mechanism |
+|---|---|---|
+| `response_format` | OpenAI, Grok, Perplexity, Cohere, GLM-4 | Native JSON schema output — single attempt |
+| `tool-calling` | Claude, DeepSeek, Mistral, HuggingFace, Ollama, Alibaba, Groq | `provide_answer` tool forced via `tool_choice`; arguments extracted, repaired, validated; retried up to 5× |
+
+The `inferenceName` you pass determines which strategy is used. Both strategies produce the same typed result.

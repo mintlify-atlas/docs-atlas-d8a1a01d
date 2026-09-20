@@ -1,0 +1,146 @@
+---
+title: "Using OpenAI GPT with json-inference"
+sidebarTitle: "OpenAI"
+description: "Connect json-inference to OpenAI's GPT models using native response_format with json_schema. Covers API key setup, recommended models, and a complete typed example."
+---
+
+`json-inference` integrates with OpenAI using the `InferenceName.GPT5Inference` enum value. OpenAI is one of the providers that natively supports `response_format` with `json_schema`, so no tool-calling workaround is needed — the library sends your schema directly and parses the structured response in a single API call.
+
+## Provider Details
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.GPT5Inference` |
+| **Strategy** | `response_format` with `json_schema` |
+| **Base URL** | `api.openai.com` |
+| **Peer dependency** | `openai` |
+| **Retries** | None (single attempt) |
+
+## Getting an API Key
+
+<Steps>
+  <Step title="Sign in to OpenAI Platform">
+    Go to [platform.openai.com](https://platform.openai.com) and sign in or create an account.
+  </Step>
+  <Step title="Create an API Key">
+    Navigate to **API Keys** in the left sidebar and click **Create new secret key**. Copy it immediately — it is only shown once.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash
+    export OPENAI_API_KEY="sk-..."
+    ```
+  </Step>
+</Steps>
+
+## Recommended Models
+
+| Model | Notes |
+|---|---|
+| `gpt-4o` | Best quality, supports vision |
+| `gpt-4o-mini` | Faster and cheaper, good for most tasks |
+| `gpt-4-turbo` | High-capability model with large context |
+
+## How It Works
+
+The `GPT5Provider` sends your `format` schema as `response_format: { type: "json_schema", json_schema: { schema: ... } }`. OpenAI returns a structured JSON string in `choices[0].message.content`, which is repaired with `jsonrepair` and returned. If the model issues a refusal (`choices[0].message.refusal`), an `Error` is thrown immediately.
+
+<Note>
+  Because OpenAI's `response_format` is reliable, no retry loop is used. A single API call is made per `generateObject()` invocation.
+</Note>
+
+## Code Example
+
+<CodeGroup>
+  ```typescript Sentiment Analysis
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.GPT5Inference,
+    {
+      format: {
+        type: "object",
+        required: ["sentiment", "confidence"],
+        properties: {
+          sentiment: {
+            type: "string",
+            description: "positive, negative, or neutral",
+          },
+          confidence: {
+            type: "number",
+            description: "Confidence score between 0 and 1",
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "Analyze sentiment: 'This product is absolutely amazing!'",
+        },
+      ],
+    },
+    "gpt-4o",
+    process.env.OPENAI_API_KEY,
+  );
+
+  // TypeScript infers the return type from the schema:
+  // result.sentiment  → string
+  // result.confidence → number
+  console.log(result.sentiment, result.confidence);
+  ```
+
+  ```typescript Structured Data Extraction
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.GPT5Inference,
+    {
+      format: {
+        type: "object",
+        required: ["name", "age", "city"],
+        properties: {
+          name: { type: "string", description: "Full name of the person" },
+          age:  { type: "integer", description: "Age in years" },
+          city: { type: "string", description: "City of residence" },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "Extract info: 'Jane Doe is 34 years old and lives in Berlin.'",
+        },
+      ],
+    },
+    "gpt-4o-mini",
+    process.env.OPENAI_API_KEY,
+  );
+
+  console.log(result.name, result.age, result.city);
+  ```
+</CodeGroup>
+
+## Handling Refusals
+
+If OpenAI's safety system declines to answer, `generateObject()` throws an `Error` with the refusal message as its text. Wrap the call in a `try/catch` to handle this case:
+
+```typescript
+try {
+  const result = await generateObject(
+    InferenceName.GPT5Inference,
+    { format, messages },
+    "gpt-4o",
+    process.env.OPENAI_API_KEY,
+  );
+} catch (error) {
+  // error.message contains the refusal reason from OpenAI
+  console.error("OpenAI refused:", error.message);
+}
+```
+
+## Switching to Another Provider
+
+Changing the first argument is all that is required to route the same schema and messages to a different provider:
+
+```typescript
+// Switch from OpenAI to DeepSeek — schema and messages unchanged
+await generateObject(InferenceName.DeepseekInference, params, "deepseek-chat", DEEPSEEK_KEY);
+```

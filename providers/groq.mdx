@@ -1,0 +1,146 @@
+---
+title: "Using Groq for Fast LLM Inference"
+sidebarTitle: "Groq"
+description: "json-inference uses Groq's native SDK with tool-calling to deliver ultra-fast structured output. Covers API key, recommended models, and a complete usage example."
+---
+
+`json-inference` integrates with Groq through `InferenceName.GroqInference`. Groq provides extremely fast inference (often sub-second) via its custom Language Processing Unit (LPU) hardware. Because Groq does not reliably support `response_format`, the library uses the **tool-calling strategy** with the `groq-sdk` peer dependency — wrapping your JSON schema as a `provide_answer` tool and retrying up to **3 times** (`MAX_ATTEMPTS = 3`) on failure.
+
+## Provider Details
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.GroqInference` |
+| **Strategy** | tool-calling (`provide_answer` tool) |
+| **Base URL** | `api.groq.com` |
+| **Peer dependency** | `groq-sdk` |
+| **Max retries** | 3 |
+
+## Getting an API Key
+
+<Steps>
+  <Step title="Sign in to Groq Console">
+    Go to [console.groq.com](https://console.groq.com) and sign in or create an account.
+  </Step>
+  <Step title="Create an API Key">
+    Navigate to **API Keys** in the sidebar and click **Create API Key**. Name it and copy the generated key.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash
+    export GROQ_API_KEY="gsk_..."
+    ```
+  </Step>
+</Steps>
+
+## Recommended Models
+
+| Model | Notes |
+|---|---|
+| `llama-3.3-70b-versatile` | High-quality Llama 3.3 70B on Groq LPUs |
+| `qwen/qwen3-32b` | Qwen 3 32B — used in the official `test.mjs` |
+
+## How It Works
+
+`GroqProvider` uses the `groq-sdk` directly (not the OpenAI-compatible wrapper). On each attempt it:
+
+1. Builds a `provide_answer` function tool from your `format` schema.
+2. Prepends a system message instructing the model to use only the tool.
+3. Calls `groq.chat.completions.create()` with `tool_choice` forced to `provide_answer`.
+4. Extracts `tool_calls[0].function.arguments`, repairs with `jsonrepair`, and validates required fields.
+5. Retries up to 3 times on any failure.
+
+<Note>
+  Unlike the Claude provider, `GroqProvider` does not check for a `refusal` field in the response — Groq's SDK does not surface one. Missing or invalid tool calls are handled by the retry loop instead.
+</Note>
+
+## Code Example
+
+The example below mirrors the official `test.mjs` shipped with the library:
+
+<CodeGroup>
+  ```typescript Hello World (test.mjs pattern)
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.GroqInference,
+    {
+      format: {
+        type: "object",
+        required: ["message"],
+        properties: {
+          message: {
+            type: "string",
+            description: "Message content",
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: 'Return the string "Hello world!" in the message field.',
+        },
+      ],
+    },
+    "qwen/qwen3-32b",
+    process.env.GROQ_API_KEY,
+  );
+
+  // result.message → string
+  console.log(result.message);
+  ```
+
+  ```typescript Sentiment Analysis
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.GroqInference,
+    {
+      format: {
+        type: "object",
+        required: ["sentiment", "confidence"],
+        properties: {
+          sentiment: {
+            type: "string",
+            description: "positive, negative, or neutral",
+            enum: ["positive", "negative", "neutral"],
+          },
+          confidence: {
+            type: "number",
+            description: "Confidence score between 0 and 1",
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "Analyze: 'Groq inference is blazing fast and easy to use!'",
+        },
+      ],
+    },
+    "llama-3.3-70b-versatile",
+    process.env.GROQ_API_KEY,
+  );
+
+  console.log(result.sentiment, result.confidence);
+  ```
+</CodeGroup>
+
+## Retry Behaviour
+
+<Warning>
+  If the model fails to invoke `provide_answer` after **3 attempts**, `generateObject()` throws:
+  `Error: Model failed to use tool after maximum attempts`
+</Warning>
+
+The retry loop handles these failure modes:
+- Model responds with **plain text** instead of a tool call — appends a follow-up user message (once) and retries.
+- Tool arguments are **malformed JSON** — `jsonrepair` is attempted first; if parsing still fails, retries.
+- Parsed arguments **fail required-field validation** — retries with a reminder message.
+
+## Peer Dependency
+
+`GroqProvider` is the only provider in `json-inference` that uses the dedicated `groq-sdk` package rather than the `openai` package. Make sure it is installed:
+
+```bash
+npm install groq-sdk
+```

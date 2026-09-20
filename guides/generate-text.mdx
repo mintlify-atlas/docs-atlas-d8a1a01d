@@ -1,0 +1,199 @@
+---
+title: "Generate Plain Text Completions with generateText()"
+sidebarTitle: "Text Generation"
+description: "Use generateText() for unstructured text completions across all 12 providers using the same InferenceName, model, and message format as generateObject()."
+---
+
+Not every task needs structured JSON output. When you want a free-form response — a summary, a conversational reply, a code explanation — `generateText()` gives you a plain `string` using the exact same provider routing, message format, and API key pattern as `generateObject()`. No schema, no type inference, no retries for tool-calling providers.
+
+## Function Signature
+
+```typescript
+export const generateText = async (
+  inferenceName: InferenceName,
+  params: ITextParams,
+  model: string,
+  apiKey?: string,
+): Promise<string>
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `inferenceName` | `InferenceName` | Provider to use (e.g. `InferenceName.GPT5Inference`) |
+| `params` | `ITextParams` | Object containing the `messages` array |
+| `model` | `string` | Model name (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20241022"`) |
+| `apiKey` | `string \| undefined` | API key — optional for Ollama local |
+
+## The `ITextParams` Interface
+
+`ITextParams` is intentionally minimal. Unlike `IOutlineParams`, there is no `format` field — you are asking for free text, not a schema-validated object.
+
+```typescript
+export interface ITextParams {
+  messages: MessageModel[];
+}
+```
+
+The `messages` array uses the same `MessageModel` type as `generateObject`, including full support for the `images` field for multimodal requests:
+
+```typescript
+export interface MessageModel {
+  role: "assistant" | "system" | "user";
+  content: string;
+  images?: string[]; // optional attached images
+}
+```
+
+## Return Value
+
+`generateText` returns `Promise<string>` — the raw text content of the model's response. No JSON parsing, no schema validation, no wrapping object.
+
+```typescript
+const text = await generateText(/* ... */);
+// text is a plain string — e.g. "The capital of France is Paris."
+```
+
+## Basic Example
+
+```typescript
+import { generateText, InferenceName } from "json-inference";
+
+const summary = await generateText(
+  InferenceName.GPT5Inference,
+  {
+    messages: [
+      {
+        role: "system",
+        content: "You are a concise technical writer.",
+      },
+      {
+        role: "user",
+        content: "Summarize the differences between REST and GraphQL in two sentences.",
+      },
+    ],
+  },
+  "gpt-4o",
+  process.env.OPENAI_API_KEY,
+);
+
+console.log(summary);
+// → "REST uses fixed endpoints and HTTP methods, returning predefined data shapes.
+//    GraphQL uses a single endpoint where clients specify exactly what data they need."
+```
+
+## Multi-Turn Conversation
+
+Because `messages` is a plain array, you can build a conversation history by appending previous assistant responses before making the next call:
+
+```typescript
+import { generateText, InferenceName, MessageModel } from "json-inference";
+
+const history: MessageModel[] = [
+  { role: "system", content: "You are a helpful coding assistant." },
+  { role: "user", content: "What is a closure in JavaScript?" },
+];
+
+const firstReply = await generateText(
+  InferenceName.ClaudeInference,
+  { messages: history },
+  "claude-3-5-sonnet-20241022",
+  process.env.ANTHROPIC_API_KEY,
+);
+
+// Append the assistant's reply and ask a follow-up
+history.push({ role: "assistant", content: firstReply });
+history.push({ role: "user", content: "Can you show me a simple example?" });
+
+const secondReply = await generateText(
+  InferenceName.ClaudeInference,
+  { messages: history },
+  "claude-3-5-sonnet-20241022",
+  process.env.ANTHROPIC_API_KEY,
+);
+
+console.log(secondReply);
+```
+
+## Works with All 12 Providers
+
+`generateText` routes through the same `RunnerAdapter` as `generateObject` and supports every provider in `InferenceName`:
+
+<Tabs>
+  <Tab title="OpenAI">
+    ```typescript
+    const text = await generateText(
+      InferenceName.GPT5Inference,
+      { messages },
+      "gpt-4o",
+      process.env.OPENAI_API_KEY,
+    );
+    ```
+  </Tab>
+  <Tab title="Ollama (local)">
+    ```typescript
+    // No API key needed for a local Ollama instance
+    const text = await generateText(
+      InferenceName.OllamaInference,
+      { messages },
+      "llama3.3:70b",
+    );
+    ```
+  </Tab>
+  <Tab title="Groq">
+    ```typescript
+    const text = await generateText(
+      InferenceName.GroqInference,
+      { messages },
+      "llama-3.3-70b-versatile",
+      process.env.GROQ_API_KEY,
+    );
+    ```
+  </Tab>
+  <Tab title="DeepSeek">
+    ```typescript
+    const text = await generateText(
+      InferenceName.DeepseekInference,
+      { messages },
+      "deepseek-chat",
+      process.env.DEEPSEEK_API_KEY,
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## Differences from `generateObject`
+
+| | `generateObject` | `generateText` |
+|---|---|---|
+| **Return type** | `Promise<InferFormat<F>>` — typed object | `Promise<string>` — plain text |
+| **`params` shape** | `{ format, messages }` | `{ messages }` |
+| **Schema required** | Yes — `FormatModel` | No |
+| **Type inference** | Yes — from schema | N/A |
+| **Tool-calling retry loop** | Yes — up to 3–5 attempts | No — direct `message.content` |
+| **JSON repair** | Yes — `jsonrepair` applied | No |
+| **Schema validation** | Yes — `validateToolArguments` | No |
+
+<Note>
+  For tool-calling providers (Claude, DeepSeek, Groq, Ollama, etc.), `generateText` does **not** define a `provide_answer` tool or enter a retry loop. It makes a single chat completion call and returns `message.content` directly, the same as a basic chat API request.
+</Note>
+
+## When to Use `generateText`
+
+<CardGroup cols={2}>
+  <Card title="Free-form responses" icon="comment">
+    Summaries, explanations, creative writing, or any output where rigid structure is unnecessary or would constrain the model.
+  </Card>
+  <Card title="Conversational interactions" icon="comments">
+    Multi-turn chat where the reply is prose and will be displayed directly to a user.
+  </Card>
+  <Card title="Prototyping" icon="flask">
+    Quickly test a prompt or model before deciding whether to add a schema and switch to `generateObject`.
+  </Card>
+  <Card title="Streaming alternative" icon="bars-progress">
+    Any scenario where you want text back but do not yet need the overhead of schema definition and validation.
+  </Card>
+</CardGroup>
+
+<Tip>
+  If you later decide you need structured output from a `generateText` call, the migration is minimal: add a `format` property to `params` and change `generateText` to `generateObject`. The `inferenceName`, `model`, `apiKey`, and `messages` arguments stay identical.
+</Tip>

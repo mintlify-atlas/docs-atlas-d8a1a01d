@@ -1,0 +1,279 @@
+---
+title: "Handle Errors and Failures in json-inference"
+sidebarTitle: "Error Handling"
+description: "Understand when json-inference throws errors for refusals, exhausted retries, and parse failures, and how to write resilient production wrappers around generateObject."
+---
+
+`json-inference` is designed to shield you from most transient LLM failures through its retry loop and JSON repair layer, but some conditions will always propagate as thrown `Error` objects. Understanding exactly when and why errors are thrown lets you write production code that handles them gracefully.
+
+## When Errors Are Thrown
+
+There are three distinct failure modes, each producing a different error.
+
+### 1. Model Refusal
+
+`response_format` providers (OpenAI, Grok, Perplexity, Cohere, GLM-4) surface content policy violations through a `message.refusal` field. When this field is set, the library throws immediately — before any JSON parsing or validation:
+
+```typescript
+// Inside GPT5Provider / GrokProvider / etc.
+if (choice.message.refusal) {
+  throw new Error(choice.message.refusal);
+}
+```
+
+The error message will contain the provider's refusal text verbatim. This is a hard stop — no retries are attempted for refusals.
+
+### 2. Exhausted Retries (tool-calling providers)
+
+Tool-calling providers (Claude, DeepSeek, Mistral, Alibaba, Hugging Face, Ollama, Groq) wrap their calls in a retry loop. Each attempt can fail for one of these reasons:
+- The model set `message.refusal`
+- The model did not call the `provide_answer` tool
+- `jsonrepair` could not produce valid JSON from the tool arguments
+- `validateToolArguments` found the parsed object does not satisfy the schema
+
+When the loop runs out of attempts without a successful result, it throws:
+
+```typescript
+throw new Error("Model failed to use tool after maximum attempts");
+```
+
+<Note>
+  Claude and most tool-calling providers allow up to **5** attempts (`MAX_ATTEMPTS = 5`). Ollama uses **3** attempts (`MAX_ATTEMPTS = 3`). These limits are set in the individual provider implementations.
+</Note>
+
+### 3. JSON Parse Failure
+
+For `response_format` providers, after `jsonrepair` is applied to the model's content, `JSON.parse` is called inside the top-level `generateObject` function:
+
+```typescript
+export const generateObject = async <F extends FormatModel>(
+  inferenceName: InferenceName,
+  params: IOutlineParams<F>,
+  model: string,
+  apiKey?: string,
+): Promise<InferFormat<F>> => {
+  const { content } = await Runner.getOutlineCompletion(
+    inferenceName,
+    params,
+    model,
+    apiKey,
+  );
+  return JSON.parse(content); // ← throws SyntaxError if still unparseable
+};
+```
+
+If the content returned by a `response_format` provider is not valid JSON even after repair, a native `SyntaxError` is thrown.
+
+## Wrapping `generateObject` in try/catch
+
+The simplest production pattern is a try/catch block that logs the error and returns a safe fallback value:
+
+```typescript
+import { generateObject, InferenceName } from "json-inference";
+
+const params = {
+  format: {
+    type: "object",
+    required: ["sentiment", "confidence"],
+    properties: {
+      sentiment: { type: "string", description: "positive, negative, or neutral" },
+      confidence: { type: "number", description: "Confidence score 0-1" },
+    },
+  },
+  messages: [
+    { role: "user", content: "Analyze sentiment: 'I hate waiting.'" },
+  ],
+};
+
+try {
+  const result = await generateObject(
+    InferenceName.GPT5Inference,
+    params,
+    "gpt-4o",
+    process.env.OPENAI_API_KEY,
+  );
+  console.log(result.sentiment, result.confidence);
+} catch (error) {
+  console.error("generateObject failed:", error);
+  // Fall back to a safe default
+  const fallback = { sentiment: "unknown", confidence: 0 };
+}
+```
+
+## Provider Fallback Pattern
+
+Because `InferenceName` is just an argument, you can cascade through multiple providers on failure:
+
+```typescript
+import { generateObject, InferenceName } from "json-inference";
+
+async function generateWithFallback(params: typeof baseParams) {
+  const providers = [
+    { inference: InferenceName.GPT5Inference,     model: "gpt-4o",                    apiKey: process.env.OPENAI_API_KEY },
+    { inference: InferenceName.ClaudeInference,   model: "claude-3-5-sonnet-20241022", apiKey: process.env.ANTHROPIC_API_KEY },
+    { inference: InferenceName.GroqInference,     model: "llama-3.3-70b-versatile",    apiKey: process.env.GROQ_API_KEY },
+  ];
+
+  const errors: Error[] = [];
+
+  for (const { inference, model, apiKey } of providers) {
+    try {
+      return await generateObject(inference, params, model, apiKey);
+    } catch (err) {
+      console.warn(`Provider ${inference} failed:`, err);
+      errors.push(err as Error);
+    }
+  }
+
+  throw new AggregateError(errors, "All providers failed");
+}
+```
+
+## The Internal Logger
+
+The library's `RunnerAdapter` constructs every provider with a silent `ILogger` instance. All four methods (`debug`, `info`, `log`, `warn`) are no-ops by default, so there is no output from the library unless a provider writes directly to `console.error` inside its retry loop.
+
+```typescript
+// From Runner.ts — the default logger (all silent)
+const logger: ILogger = {
+  debug() {},
+  info() {},
+  log() {},
+  warn() {},
+};
+```
+
+```typescript
+// The ILogger interface
+export interface ILogger {
+  log(topic: string, ...args: any[]): void;
+  debug(topic: string, ...args: any[]): void;
+  info(topic: string, ...args: any[]): void;
+  warn(topic: string, ...args: any[]): void;
+}
+```
+
+<Note>
+  Tool-calling providers write directly to `console.error` inside the retry loop (e.g. `"Attempt 2: Model did not use tool"`). These messages come from the provider implementations, not from the logger. To suppress them in production you can redirect `console.error` before calling the library.
+</Note>
+
+## `validateToolArguments` and the `ValidationResult`
+
+Inside the retry loop, every set of tool call arguments is validated with `validateToolArguments` before being returned. You can use this function directly in your own code for pre- or post-call validation.
+
+```typescript
+export interface ValidationResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+export const validateToolArguments = <T = any>(
+  parsedArguments: unknown,
+  schema: FormatModel,
+): ValidationResult<T>
+```
+
+A successful result has `success: true` and `data` set to the validated object. A failed result has `success: false` and `error` set to a human-readable description of the first validation failure found.
+
+```typescript
+import { validateToolArguments } from "json-inference";
+
+const schema = {
+  type: "object",
+  required: ["score"],
+  properties: {
+    score: { type: "number", description: "Score between 0 and 100" },
+  },
+};
+
+// Valid input
+const ok = validateToolArguments({ score: 87 }, schema);
+// → { success: true, data: { score: 87 } }
+
+// Missing required field
+const missing = validateToolArguments({}, schema);
+// → { success: false, error: "Missing required fields: score" }
+
+// Wrong type
+const wrong = validateToolArguments({ score: "high" }, schema);
+// → { success: false, error: 'Invalid arguments: score: expected number, got string' }
+```
+
+### Using `validateToolArguments` Before Calling the Library
+
+If you are building a pipeline that assembles messages from untrusted sources, you can validate your own constructed output against a schema before passing it anywhere:
+
+```typescript
+import { validateToolArguments } from "json-inference";
+
+function assertValidOutput<T>(data: unknown, schema: FormatModel): T {
+  const result = validateToolArguments<T>(data, schema);
+  if (!result.success) {
+    throw new Error(`Output validation failed: ${result.error}`);
+  }
+  return result.data as T;
+}
+```
+
+## Best Practice Checklist
+
+<Steps>
+  <Step title="Always wrap in try/catch">
+    `generateObject` and `generateText` are async functions that throw. Any uncaught rejection will crash a Node.js process or silently swallow the result in some environments.
+
+    ```typescript
+    try {
+      const result = await generateObject(/* ... */);
+    } catch (error) {
+      // handle or re-throw
+    }
+    ```
+  </Step>
+
+  <Step title="Log the error with context">
+    Include the provider name and model in your log message so you know which call failed:
+
+    ```typescript
+    catch (error) {
+      console.error(
+        `[json-inference] ${InferenceName.ClaudeInference} / claude-3-5-sonnet-20241022 failed:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+    ```
+  </Step>
+
+  <Step title="Return a typed fallback value">
+    Avoid crashing downstream logic by returning a safe default that matches your schema:
+
+    ```typescript
+    catch (error) {
+      return {
+        sentiment: "unknown" as const,
+        confidence: 0,
+      };
+    }
+    ```
+  </Step>
+
+  <Step title="Distinguish refusals from infrastructure errors">
+    Refusals indicate the model refused to answer the prompt. Infrastructure errors (timeouts, rate limits) are usually worth retrying with a different provider. You can distinguish them by message text:
+
+    ```typescript
+    catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "Model failed to use tool after maximum attempts") {
+          // Tool-calling provider gave up — try a response_format provider
+        } else {
+          // Likely a refusal or network error — log and fall back
+        }
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Do not silently ignore errors from `generateObject`. A silent catch means your application will continue with `undefined` or a stale value, which is harder to debug than a logged error message.
+</Warning>

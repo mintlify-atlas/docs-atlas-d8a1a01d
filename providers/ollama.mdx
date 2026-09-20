@@ -1,0 +1,171 @@
+---
+title: "Using Ollama for Local LLM Inference"
+sidebarTitle: "Ollama"
+description: "Run structured LLM inference entirely on your machine with InferenceName.OllamaInference. No API key needed. Covers Ollama setup, model pulling, and a complete code example."
+---
+
+`json-inference` supports fully local inference through `InferenceName.OllamaInference`, powered by [Ollama](https://ollama.com). Everything runs on your machine — no API key is required and no data leaves your network. The provider uses the **tool-calling strategy** via the `ollama` peer dependency, with up to **3 retries** (`MAX_ATTEMPTS = 3`) on failure.
+
+## Provider Details
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.OllamaInference` |
+| **Strategy** | tool-calling (`provide_answer` tool) |
+| **Default host** | `localhost:11434` |
+| **Peer dependency** | `ollama` |
+| **API key** | Not required |
+| **Max retries** | 3 |
+
+## Setting Up Ollama
+
+<Steps>
+  <Step title="Install Ollama">
+    Download and install Ollama for your operating system from [ollama.com/download](https://ollama.com/download).
+
+    ```bash
+    # macOS / Linux (curl installer)
+    curl -fsSL https://ollama.com/install.sh | sh
+    ```
+  </Step>
+  <Step title="Pull a model">
+    Pull the recommended model. This downloads the weights to your local machine:
+
+    ```bash
+    ollama pull llama3.3:70b
+    ```
+  </Step>
+  <Step title="Verify Ollama is running">
+    Ollama starts automatically after installation. Confirm it is up:
+
+    ```bash
+    curl http://localhost:11434/api/tags
+    ```
+
+    You should see a JSON list of locally available models.
+  </Step>
+</Steps>
+
+## Recommended Models
+
+| Model | Notes |
+|---|---|
+| `llama3.3:70b` | Recommended — strong tool-calling support |
+
+<Tip>
+  Models must be pulled with `ollama pull <model>` before use. The `generateObject()` call will fail if the requested model is not present locally.
+</Tip>
+
+## How It Works
+
+`OllamaProvider` connects to your local Ollama daemon at `localhost:11434` using the `ollama` npm package. Images in messages are adapted via the `toOllamaMessages` helper, which handles Ollama's separate `images` field — a difference from the OpenAI message format used by other providers.
+
+On each attempt the provider:
+
+1. Converts your `format` schema into a `provide_answer` tool definition.
+2. Prepends a system message that instructs the model to use only the tool.
+3. Calls `ollama.chat()` with the tool list and `think: true` enabled (Ollama extended thinking).
+4. Extracts `tool_calls[0].function.arguments` — handles both string and pre-parsed object formats from the SDK.
+5. Repairs with `jsonrepair`, validates required fields, and retries up to 3 times.
+
+<Note>
+  Ollama's tool call arguments may arrive as either a **string** or a **pre-parsed object** depending on the model. `OllamaProvider` handles both formats automatically.
+</Note>
+
+## Code Example
+
+The `apiKey` parameter is omitted entirely when using Ollama locally:
+
+<CodeGroup>
+  ```typescript Local Sentiment Analysis (no API key)
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.OllamaInference,
+    {
+      format: {
+        type: "object",
+        required: ["sentiment", "confidence"],
+        properties: {
+          sentiment: {
+            type: "string",
+            description: "positive, negative, or neutral",
+            enum: ["positive", "negative", "neutral"],
+          },
+          confidence: {
+            type: "number",
+            description: "Confidence score between 0 and 1",
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "Analyze sentiment: 'Running models locally is liberating!'",
+        },
+      ],
+    },
+    "llama3.3:70b",
+    // No apiKey argument needed for local Ollama
+  );
+
+  // result.sentiment  → string
+  // result.confidence → number
+  console.log(result.sentiment, result.confidence);
+  ```
+
+  ```typescript Structured Data Extraction
+  import { generateObject, InferenceName } from 'json-inference';
+
+  const result = await generateObject(
+    InferenceName.OllamaInference,
+    {
+      format: {
+        type: "object",
+        required: ["name", "version", "language"],
+        properties: {
+          name:     { type: "string", description: "Project name" },
+          version:  { type: "string", description: "Version string" },
+          language: { type: "string", description: "Primary programming language" },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content: "Extract: 'json-inference v1.0.0 is a TypeScript library.'",
+        },
+      ],
+    },
+    "llama3.3:70b",
+  );
+
+  console.log(result.name, result.version, result.language);
+  ```
+</CodeGroup>
+
+## Using Ollama Cloud (Optional)
+
+If you are running Ollama in a hosted/cloud environment with authentication, you can pass an API key. The provider will connect to `https://ollama.com` with a `Bearer` token instead of the local daemon:
+
+```typescript
+// Cloud-hosted Ollama with authentication
+await generateObject(
+  InferenceName.OllamaInference,
+  { format, messages },
+  "llama3.3:70b",
+  process.env.OLLAMA_API_KEY, // Optional — triggers cloud mode
+);
+```
+
+## Image Support
+
+Ollama uses a separate `images` field in its message format rather than embedding images in the `content` array. `json-inference` handles this automatically via the `toOllamaMessages` helper, so your messages can include images in the standard format and they will be adapted correctly.
+
+## Retry Behaviour
+
+<Warning>
+  If the local model fails to invoke `provide_answer` after **3 attempts**, `generateObject()` throws:
+  `Error: Model failed to use tool after maximum attempts`
+
+  This is more likely on smaller models. Use `llama3.3:70b` for best results with tool calling.
+</Warning>

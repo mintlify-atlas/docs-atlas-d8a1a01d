@@ -1,0 +1,82 @@
+---
+title: "All Supported LLM Providers in json-inference"
+sidebarTitle: "Overview"
+description: "Browse all 12 LLM providers supported by json-inference, their InferenceName enum values, structured-output strategy, base URLs, and where to obtain API keys."
+---
+
+`json-inference` ships with built-in support for twelve LLM providers. Every provider is accessed through the same `generateObject()` function — you simply swap the `InferenceName` enum value to change providers. Under the hood, the library routes each call to either a native `response_format` path or a tool-calling path, depending on what the provider reliably supports.
+
+## Provider Table
+
+| Provider | `InferenceName` | Strategy | Base URL | API Key |
+|---|---|---|---|---|
+| OpenAI | `GPT5Inference` | `response_format` | `api.openai.com` | [platform.openai.com](https://platform.openai.com) |
+| Claude | `ClaudeInference` | tool-calling | `api.anthropic.com/v1/` | [console.anthropic.com](https://console.anthropic.com) |
+| DeepSeek | `DeepseekInference` | tool-calling | `api.deepseek.com` | [platform.deepseek.com](https://platform.deepseek.com) |
+| Grok | `GrokInference` | `response_format` | `api.x.ai/v1/` | [console.x.ai](https://console.x.ai) |
+| Mistral | `MistralInference` | tool-calling | `api.mistral.ai/v1/` | [console.mistral.ai](https://console.mistral.ai) |
+| Perplexity | `PerplexityInference` | `response_format` | `api.perplexity.ai` | [perplexity.ai/settings/api](https://perplexity.ai/settings/api) |
+| Cohere | `CohereInference` | `response_format` | `api.cohere.ai/compatibility/v1` | [dashboard.cohere.com](https://dashboard.cohere.com) |
+| Alibaba | `AlibabaInference` | tool-calling | `dashscope-intl.aliyuncs.com` | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+| Hugging Face | `HfInference` | tool-calling | `router.huggingface.co/v1/` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
+| Ollama | `OllamaInference` | tool-calling | `localhost:11434` | *(none required)* |
+| GLM-4 | `GLM4Inference` | `response_format` | `api.z.ai/api/paas/v4/` | [open.bigmodel.cn](https://open.bigmodel.cn) |
+| Groq | `GroqInference` | tool-calling | `api.groq.com` | [console.groq.com](https://console.groq.com) |
+
+## Output Strategies
+
+`json-inference` uses two different strategies to guarantee structured JSON output, chosen automatically per provider.
+
+<CardGroup cols={2}>
+  <Card title="response_format" icon="brackets-curly">
+    Used by providers with native JSON schema support: **OpenAI, Grok, Perplexity, Cohere, GLM-4**. The schema is sent directly as `response_format: { type: "json_schema", ... }`. A single API call is made and the content is parsed directly. Refusals are thrown as errors.
+  </Card>
+  <Card title="tool-calling" icon="wrench">
+    Used by providers that lack reliable `response_format` support: **Claude, DeepSeek, Mistral, Hugging Face, Ollama, Alibaba, Groq**. The schema is wrapped as a `provide_answer` tool definition, `tool_choice` forces the model to call it, and the arguments are extracted, repaired with `jsonrepair`, and validated. Retries up to 3–5 times on failure.
+  </Card>
+</CardGroup>
+
+## Local vs. Cloud Providers
+
+<Note>
+  **Ollama** (`OllamaInference`) is the only provider that runs entirely on your local machine. It connects to `localhost:11434` by default and requires no API key. All other providers are cloud-hosted and require an API key obtained from their respective developer consoles.
+</Note>
+
+## Installation
+
+All three peer-dependency SDKs must be installed alongside `json-inference`:
+
+```bash
+npm install json-inference openai ollama groq-sdk
+```
+
+| Package | Covers |
+|---|---|
+| `openai` | OpenAI, Claude, DeepSeek, Mistral, Perplexity, Cohere, GLM-4 |
+| `ollama` | Ollama |
+| `groq-sdk` | Groq |
+
+## Individual Provider Guides
+
+Detailed configuration, recommended models, and complete code examples are available for the most popular providers:
+
+<CardGroup cols={2}>
+  <Card title="OpenAI" icon="robot" href="/providers/openai">
+    GPT-4o and GPT-4o-mini with native `response_format`
+  </Card>
+  <Card title="Claude" icon="c" href="/providers/claude">
+    Anthropic Claude via tool-calling with up to 5 retries
+  </Card>
+  <Card title="DeepSeek" icon="magnifying-glass" href="/providers/deepseek">
+    DeepSeek Chat via tool-calling strategy
+  </Card>
+  <Card title="Groq" icon="bolt" href="/providers/groq">
+    Ultra-fast inference via Groq's dedicated SDK
+  </Card>
+  <Card title="Ollama" icon="house" href="/providers/ollama">
+    Local LLM inference — no API key required
+  </Card>
+  <Card title="Other Providers" icon="grid" href="/providers/other-providers">
+    Mistral, Grok, Perplexity, Cohere, Alibaba, HuggingFace, GLM-4
+  </Card>
+</CardGroup>

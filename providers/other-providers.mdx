@@ -1,0 +1,377 @@
+---
+title: "Mistral, Grok, Perplexity, Cohere, Alibaba, HuggingFace, GLM-4"
+sidebarTitle: "Other Providers"
+description: "Setup and usage examples for the remaining 7 json-inference providers: Mistral, Grok, Perplexity, Cohere, Alibaba Cloud, Hugging Face, and GLM-4 (Z.ai)."
+---
+
+`json-inference` supports seven additional providers beyond OpenAI, Claude, DeepSeek, Groq, and Ollama. Each uses the same `generateObject()` function — only the `InferenceName` value, model name, and API key change. Expand any section below for provider-specific details and a short code snippet.
+
+<Accordion title="Mistral — MistralInference">
+
+Mistral AI models are accessed through `InferenceName.MistralInference`. Because Mistral does not reliably honour `response_format`, `json-inference` uses the **tool-calling strategy** via the OpenAI-compatible SDK pointed at `https://api.mistral.ai/v1`.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.MistralInference` |
+| **Strategy** | tool-calling (`provide_answer` tool) |
+| **Base URL** | `https://api.mistral.ai/v1` |
+| **Peer dependency** | `openai` |
+| **Max retries** | 3 |
+| **API key source** | [console.mistral.ai](https://console.mistral.ai) |
+
+**Setup:**
+
+```bash
+export MISTRAL_API_KEY="..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.MistralInference,
+  {
+    format: {
+      type: "object",
+      required: ["summary", "keywords"],
+      properties: {
+        summary:  { type: "string", description: "One-sentence summary of the text" },
+        keywords: { type: "array",  description: "List of key topics" },
+      },
+    },
+    messages: [
+      {
+        role: "user",
+        content: "Summarize: 'Mistral AI builds open and efficient language models for enterprise use.'",
+      },
+    ],
+  },
+  "mistral-large-latest",
+  process.env.MISTRAL_API_KEY,
+);
+
+console.log(result.summary);
+```
+
+</Accordion>
+
+<Accordion title="Grok — GrokInference">
+
+Grok is X.AI's LLM, accessed through `InferenceName.GrokInference`. It supports native `response_format`, so `json-inference` uses the **response_format strategy** — a single API call with `json_schema` output and no retry loop. Requests are made directly to `https://api.x.ai/v1/chat/completions` via `fetchApi`.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.GrokInference` |
+| **Strategy** | `response_format` |
+| **Base URL** | `https://api.x.ai/v1/` |
+| **Peer dependency** | none (uses `fetchApi` from `functools-kit`) |
+| **Max retries** | None (single attempt) |
+| **API key source** | [console.x.ai](https://console.x.ai) |
+
+**Setup:**
+
+```bash
+export XAI_API_KEY="xai-..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.GrokInference,
+  {
+    format: {
+      type: "object",
+      required: ["answer", "confidence"],
+      properties: {
+        answer:     { type: "string", description: "Direct answer to the question" },
+        confidence: { type: "number", description: "Confidence score 0-1" },
+      },
+    },
+    messages: [
+      { role: "user", content: "What is the capital of France?" },
+    ],
+  },
+  "grok-3-mini",
+  process.env.XAI_API_KEY,
+);
+
+console.log(result.answer, result.confidence);
+```
+
+<Note>
+  `GrokProvider` uses `fetchApi` with `max_tokens: 5000` set on every request. Refusals are thrown as errors immediately.
+</Note>
+
+</Accordion>
+
+<Accordion title="Perplexity — PerplexityInference">
+
+Perplexity is accessed through `InferenceName.PerplexityInference` and uses the **response_format strategy** via the OpenAI-compatible SDK. The provider includes special message preprocessing: consecutive `user` and `assistant` messages are merged to satisfy Perplexity's alternating-turn requirement, and `system` messages are consolidated into a single prefix.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.PerplexityInference` |
+| **Strategy** | `response_format` |
+| **Base URL** | `https://api.perplexity.ai` |
+| **Peer dependency** | `openai` |
+| **Max retries** | None (single attempt) |
+| **API key source** | [perplexity.ai/settings/api](https://perplexity.ai/settings/api) |
+
+**Setup:**
+
+```bash
+export PERPLEXITY_API_KEY="pplx-..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.PerplexityInference,
+  {
+    format: {
+      type: "object",
+      required: ["topic", "sources_count"],
+      properties: {
+        topic:        { type: "string",  description: "Main topic of the answer" },
+        sources_count: { type: "integer", description: "Number of sources cited" },
+      },
+    },
+    messages: [
+      { role: "user", content: "What is quantum computing and how many key sources exist?" },
+    ],
+  },
+  "sonar",
+  process.env.PERPLEXITY_API_KEY,
+);
+
+console.log(result.topic, result.sources_count);
+```
+
+</Accordion>
+
+<Accordion title="Cohere — CohereInference">
+
+Cohere is accessed through `InferenceName.CohereInference` via the OpenAI-compatible endpoint at `https://api.cohere.ai/compatibility/v1`. The **response_format strategy** is used, with consecutive user messages merged into single turns. Consecutive assistant messages are intentionally **not** merged, as Cohere requires a strict `tool_calls → tool_responses` sequence in its message history.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.CohereInference` |
+| **Strategy** | `response_format` |
+| **Base URL** | `https://api.cohere.ai/compatibility/v1` |
+| **Peer dependency** | `openai` |
+| **Max retries** | None (single attempt) |
+| **API key source** | [dashboard.cohere.com](https://dashboard.cohere.com) |
+
+**Setup:**
+
+```bash
+export COHERE_API_KEY="..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.CohereInference,
+  {
+    format: {
+      type: "object",
+      required: ["category", "priority"],
+      properties: {
+        category: {
+          type: "string",
+          description: "Bug, Feature, or Question",
+          enum: ["Bug", "Feature", "Question"],
+        },
+        priority: { type: "integer", description: "Priority level 1 (low) to 5 (critical)" },
+      },
+    },
+    messages: [
+      { role: "user", content: "Classify: 'The login button crashes the app on iOS 17.'" },
+    ],
+  },
+  "command-r-plus",
+  process.env.COHERE_API_KEY,
+);
+
+console.log(result.category, result.priority);
+```
+
+</Accordion>
+
+<Accordion title="Alibaba Cloud — AlibabaInference">
+
+Alibaba Cloud's DashScope models are accessed through `InferenceName.AlibabaInference`. Because DashScope does not reliably support `response_format`, `json-inference` uses the **tool-calling strategy** via direct `fetchApi` calls to `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`. Extended thinking is explicitly disabled (`enable_thinking: false`) to keep responses deterministic.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.AlibabaInference` |
+| **Strategy** | tool-calling (`provide_answer` tool) |
+| **Base URL** | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
+| **Peer dependency** | none (uses `fetchApi` from `functools-kit`) |
+| **Max retries** | 3 |
+| **API key source** | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+
+**Setup:**
+
+```bash
+export DASHSCOPE_API_KEY="sk-..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.AlibabaInference,
+  {
+    format: {
+      type: "object",
+      required: ["intent", "language"],
+      properties: {
+        intent:   { type: "string", description: "User intent: buy, sell, or inquire" },
+        language: { type: "string", description: "Detected language code, e.g. en, zh" },
+      },
+    },
+    messages: [
+      { role: "user", content: "I want to purchase 10 units of product SKU-4892." },
+    ],
+  },
+  "qwen-plus",
+  process.env.DASHSCOPE_API_KEY,
+);
+
+console.log(result.intent, result.language);
+```
+
+</Accordion>
+
+<Accordion title="Hugging Face — HfInference">
+
+Hugging Face models are accessed through `InferenceName.HfInference` using the Inference Router at `https://router.huggingface.co/v1/`. The **tool-calling strategy** is used with up to **5 retries** (`MAX_ATTEMPTS = 5`). This provider also captures `reasoning_content` from the model response and attaches it to the result as `_thinking` for models that support chain-of-thought.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.HfInference` |
+| **Strategy** | tool-calling (`provide_answer` tool) |
+| **Base URL** | `https://router.huggingface.co/v1/` |
+| **Peer dependency** | none (uses `fetchApi` from `functools-kit`) |
+| **Max retries** | 5 |
+| **API key source** | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
+
+**Setup:**
+
+```bash
+export HF_TOKEN="hf_..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.HfInference,
+  {
+    format: {
+      type: "object",
+      required: ["label", "score"],
+      properties: {
+        label: {
+          type: "string",
+          description: "positive, negative, or neutral",
+          enum: ["positive", "negative", "neutral"],
+        },
+        score: { type: "number", description: "Confidence score 0-1" },
+      },
+    },
+    messages: [
+      { role: "user", content: "Classify: 'The open-source community is incredible!'" },
+    ],
+  },
+  "meta-llama/Llama-3.3-70B-Instruct",
+  process.env.HF_TOKEN,
+);
+
+console.log(result.label, result.score);
+```
+
+<Note>
+  `HfProvider` stores the model's `reasoning_content` (chain-of-thought) in the `_thinking` field of the result object when it is present. This is available for models that expose internal reasoning.
+</Note>
+
+</Accordion>
+
+<Accordion title="GLM-4 — GLM4Inference">
+
+GLM-4 models from Zhipu AI (Z.ai) are accessed through `InferenceName.GLM4Inference`. GLM-4 supports native `response_format`, so `json-inference` uses the **response_format strategy** via the OpenAI-compatible SDK pointed at `https://api.z.ai/api/paas/v4/`. A single API call is made per invocation and refusals are thrown as errors.
+
+| Property | Value |
+|---|---|
+| **InferenceName** | `InferenceName.GLM4Inference` |
+| **Strategy** | `response_format` |
+| **Base URL** | `https://api.z.ai/api/paas/v4/` |
+| **Peer dependency** | `openai` |
+| **Max retries** | None (single attempt) |
+| **API key source** | [open.bigmodel.cn](https://open.bigmodel.cn) |
+
+**Setup:**
+
+```bash
+export GLM4_API_KEY="..."
+```
+
+**Example:**
+
+```typescript
+import { generateObject, InferenceName } from 'json-inference';
+
+const result = await generateObject(
+  InferenceName.GLM4Inference,
+  {
+    format: {
+      type: "object",
+      required: ["title", "tags"],
+      properties: {
+        title: { type: "string", description: "Article headline" },
+        tags:  { type: "array",  description: "List of topic tags" },
+      },
+    },
+    messages: [
+      {
+        role: "user",
+        content: "Generate a title and tags for an article about large language models in healthcare.",
+      },
+    ],
+  },
+  "glm-4",
+  process.env.GLM4_API_KEY,
+);
+
+console.log(result.title, result.tags);
+```
+
+</Accordion>
+
+## Quick Reference
+
+| Provider | `InferenceName` | Strategy | Max retries |
+|---|---|---|---|
+| Mistral | `MistralInference` | tool-calling | 3 |
+| Grok | `GrokInference` | `response_format` | — |
+| Perplexity | `PerplexityInference` | `response_format` | — |
+| Cohere | `CohereInference` | `response_format` | — |
+| Alibaba | `AlibabaInference` | tool-calling | 3 |
+| Hugging Face | `HfInference` | tool-calling | 5 |
+| GLM-4 | `GLM4Inference` | `response_format` | — |
